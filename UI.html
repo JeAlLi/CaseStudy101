@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CarPrice Predictor — Used Vehicle Price Prediction System</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0E1116;
+    --ink-soft:#171B23;
+    --ink-line:#262B35;
+    --paper:#F2F3F6;
+    --surface:#FFFFFF;
+    --border:#E2E4EA;
+    --text:#1A1D24;
+    --text-muted:#6B7280;
+    --text-faint:#9AA0AC;
+    --indigo:#4F5FFF;
+    --indigo-dark:#3B46D1;
+    --indigo-soft:#EEF0FF;
+    --coral:#FF6B57;
+    --coral-soft:#FFEEEC;
+    --teal:#12B8A2;
+    --teal-soft:#E6FBF7;
+    --amber:#F5A623;
+    --radius:10px;
+    --font-display:'Space Grotesk',sans-serif;
+    --font-body:'Inter',sans-serif;
+    --font-mono:'JetBrains Mono',monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    font-family:var(--font-body);
+    background:var(--paper);
+    color:var(--text);
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--indigo); color:#fff;}
+  a{color:inherit;}
+  button{font-family:inherit; cursor:pointer;}
+
+  /* ---------- LAYOUT ---------- */
+  .app{display:flex; min-height:100vh;}
+
+  /* ---------- SIDEBAR ---------- */
+  .sidebar{
+    width:264px; flex-shrink:0;
+    background:var(--ink);
+    color:#fff;
+    padding:24px 16px;
+    display:flex; flex-direction:column;
+    position:sticky; top:0; height:100vh;
+  }
+  .brand{display:flex; align-items:center; gap:11px; padding:6px 10px 22px 10px;}
+  .brand-mark{
+    width:38px; height:38px; border-radius:9px;
+    background:linear-gradient(135deg, var(--indigo), #7A6BFF);
+    display:flex; align-items:center; justify-content:center;
+    flex-shrink:0;
+  }
+  .brand-mark svg{width:20px; height:20px;}
+  .brand-text{font-family:var(--font-display); font-weight:600; font-size:16.5px; line-height:1.15;}
+  .brand-text span{color:var(--indigo); font-weight:700;}
+  .brand-sub{font-family:var(--font-mono); font-size:10.5px; color:var(--text-faint); letter-spacing:.04em; margin-top:1px;}
+
+  .nav-label{
+    font-family:var(--font-mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+    color:#5A6270; padding:18px 12px 8px;
+  }
+  .nav{list-style:none; display:flex; flex-direction:column; gap:2px;}
+  .nav-item{
+    display:flex; align-items:center; gap:11px;
+    padding:10px 12px; border-radius:8px;
+    font-size:13.5px; font-weight:500; color:#B8BEC9;
+    transition:background .15s ease, color .15s ease;
+    position:relative;
+  }
+  .nav-item svg{width:17px; height:17px; flex-shrink:0; opacity:.85;}
+  .nav-item:hover{background:var(--ink-soft); color:#fff;}
+  .nav-item.active{background:var(--indigo); color:#fff;}
+  .nav-item.active svg{opacity:1;}
+
+  .sidebar-footer{
+    margin-top:auto; padding:16px 12px; border-radius:10px;
+    background:var(--ink-soft); border:1px solid var(--ink-line);
+  }
+  .sidebar-footer .sf-eyebrow{display:flex; align-items:center; gap:7px; font-family:var(--font-mono); font-size:10px; letter-spacing:.08em; color:var(--teal); text-transform:uppercase; margin-bottom:8px;}
+  .sf-dot{width:6px; height:6px; border-radius:50%; background:var(--teal); box-shadow:0 0 0 3px rgba(18,184,162,.18);}
+  .sidebar-footer p{font-size:12px; line-height:1.55; color:#9BA1AD;}
+
+  /* ---------- MAIN ---------- */
+  .main{flex:1; min-width:0;}
+
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:16px 36px; border-bottom:1px solid var(--border);
+    background:var(--surface);
+    position:sticky; top:0; z-index:5;
+  }
+  .topbar-title{font-family:var(--font-display); font-weight:600; font-size:15px;}
+  .topbar-title .path{color:var(--text-faint); font-weight:500;}
+  .theme-toggle{
+    display:flex; align-items:center; gap:8px;
+    padding:5px 6px; border-radius:20px; background:var(--paper); border:1px solid var(--border);
+  }
+  .theme-toggle .track{width:34px; height:18px; border-radius:20px; background:var(--indigo); position:relative;}
+  .theme-toggle .knob{position:absolute; top:2px; right:2px; width:14px; height:14px; border-radius:50%; background:#fff;}
+  .theme-toggle svg{width:14px; height:14px; color:var(--text-faint);}
+
+  .view{display:none; padding:36px;}
+  .view.active{display:block; animation:fadeUp .35s ease;}
+  @keyframes fadeUp{from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);}}
+
+  /* ---------- HERO (Dashboard) ---------- */
+  .hero{
+    background:radial-gradient(120% 160% at 100% 0%, #1B2140 0%, var(--ink) 55%);
+    border-radius:16px; padding:40px 40px 34px;
+    color:#fff; margin-bottom:28px; position:relative; overflow:hidden;
+  }
+  .hero::after{
+    content:""; position:absolute; right:-60px; top:-60px; width:340px; height:340px; border-radius:50%;
+    background:radial-gradient(circle, rgba(79,95,255,.35), transparent 70%);
+  }
+  .hero-eyebrow{
+    display:inline-flex; align-items:center; gap:7px; font-family:var(--font-mono); font-size:11px;
+    letter-spacing:.08em; text-transform:uppercase; color:#9DA6FF;
+    background:rgba(79,95,255,.14); border:1px solid rgba(79,95,255,.35);
+    padding:6px 12px; border-radius:20px; margin-bottom:18px;
+  }
+  .hero h1{
+    font-family:var(--font-display); font-weight:700; font-size:36px; line-height:1.15;
+    max-width:600px; letter-spacing:-.01em;
+  }
+  .hero h1 em{font-style:normal; color:var(--indigo); background:linear-gradient(90deg,#8C9BFF,#4F5FFF); -webkit-background-clip:text; background-clip:text; color:transparent;}
+  .hero p{font-size:14.5px; color:#B7BCCC; max-width:480px; margin-top:14px; line-height:1.6;}
+
+  .equation-strip{
+    margin-top:26px; display:inline-flex; align-items:center; gap:14px;
+    background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12);
+    border-radius:10px; padding:12px 18px; backdrop-filter:blur(6px);
+    max-width:100%; overflow-x:auto;
+  }
+  .equation-strip .tag{font-family:var(--font-mono); font-size:10px; letter-spacing:.06em; color:var(--teal); background:var(--teal-soft); color:#0C8778; padding:3px 8px; border-radius:5px; flex-shrink:0;}
+  .equation-strip .eq{font-family:var(--font-mono); font-size:13px; color:#E7E9F5; white-space:nowrap;}
+  .equation-strip .eq b{color:#9DA6FF; font-weight:600;}
+
+  .hero-stats{display:flex; gap:36px; margin-top:30px; flex-wrap:wrap;}
+  .hero-stat b{font-family:var(--font-mono); font-size:22px; display:block; color:#fff;}
+  .hero-stat span{font-size:11.5px; color:#9198AA;}
+
+  /* ---------- GRID / CARDS ---------- */
+  .grid-4{display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:28px;}
+  .kpi{
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+    padding:18px 20px;
+  }
+  .kpi-top{display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;}
+  .kpi-icon{width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center;}
+  .kpi-icon svg{width:16px; height:16px;}
+  .kpi .delta{font-family:var(--font-mono); font-size:11px; font-weight:600; display:flex; align-items:center; gap:3px;}
+  .kpi .delta.up{color:var(--teal);} .kpi .delta.down{color:var(--coral);}
+  .kpi .val{font-family:var(--font-mono); font-size:25px; font-weight:600;}
+  .kpi .lbl{font-size:12px; color:var(--text-muted); margin-top:3px;}
+
+  .two-col{display:grid; grid-template-columns:1.2fr .8fr; gap:20px;}
+
+  .panel{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:26px;}
+  .panel + .panel{margin-top:20px;}
+  .panel-head{display:flex; align-items:center; gap:10px; margin-bottom:4px;}
+  .panel-head .ic{width:30px; height:30px; border-radius:8px; background:var(--indigo-soft); display:flex; align-items:center; justify-content:center;}
+  .panel-head .ic svg{width:15px; height:15px; color:var(--indigo);}
+  .panel-head h3{font-family:var(--font-display); font-size:16px; font-weight:600;}
+  .panel-sub{font-size:12.5px; color:var(--text-muted); margin:2px 0 20px 40px;}
+
+  /* ---------- FORM ---------- */
+  .form-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px 18px;}
+  .field label{display:block; font-size:12px; font-weight:600; color:var(--text); margin-bottom:6px;}
+  .field .opt{font-weight:400; color:var(--text-faint);}
+  .field select, .field input{
+    width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px;
+    font-size:13.5px; font-family:var(--font-body); color:var(--text); background:var(--surface);
+    appearance:none; -webkit-appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%239AA0AC'/></svg>");
+    background-repeat:no-repeat; background-position:right 12px center;
+  }
+  .field input{background-image:none;}
+  .field select:focus, .field input:focus{outline:none; border-color:var(--indigo); box-shadow:0 0 0 3px var(--indigo-soft);}
+
+  .predict-btn{
+    margin-top:22px; width:100%; padding:14px; border:none; border-radius:9px;
+    background:var(--indigo); color:#fff; font-weight:600; font-size:14px;
+    display:flex; align-items:center; justify-content:center; gap:9px;
+    transition:background .15s ease, transform .1s ease;
+  }
+  .predict-btn:hover{background:var(--indigo-dark);}
+  .predict-btn:active{transform:scale(.99);}
+  .predict-btn svg{width:16px; height:16px;}
+
+  /* ---------- RESULT ---------- */
+  .price-box{
+    background:linear-gradient(160deg, var(--indigo-soft), #fff 60%);
+    border:1px solid #DCE0FF; border-radius:12px; padding:22px; text-align:center;
+  }
+  .price-box .lbl{font-size:12px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.06em; font-family:var(--font-mono);}
+  .price-box .amt{font-family:var(--font-mono); font-weight:700; font-size:34px; color:var(--indigo-dark); margin:8px 0 4px;}
+  .price-box .amt span{font-size:19px; vertical-align:2px; margin-right:2px;}
+  .price-box .range{font-family:var(--font-mono); font-size:12.5px; color:var(--text-muted);}
+  .price-box .range b{color:var(--text);}
+
+  .breakdown{margin-top:18px;}
+  .breakdown .row{display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border); font-size:13px;}
+  .breakdown .row:last-child{border-bottom:none;}
+  .breakdown .row.total{font-weight:700; color:var(--indigo-dark); padding-top:14px;}
+  .breakdown .row .amt{font-family:var(--font-mono); font-weight:600; display:flex; align-items:center; gap:4px;}
+  .breakdown .row .amt.pos{color:var(--teal);} .breakdown .row .amt.neg{color:var(--coral);}
+
+  .note{
+    margin-top:16px; display:flex; gap:9px; padding:12px 14px; border-radius:8px;
+    background:var(--paper); border:1px solid var(--border); font-size:11.5px; color:var(--text-muted); line-height:1.6;
+  }
+  .note svg{width:15px; height:15px; flex-shrink:0; margin-top:1px; color:var(--text-faint);}
+  .note b{color:var(--text);}
+
+  /* ---------- TABLE (Browse Listings) ---------- */
+  .filters{display:flex; gap:10px; margin-bottom:18px; flex-wrap:wrap;}
+  .filters select, .filters input{padding:8px 12px; border:1px solid var(--border); border-radius:7px; font-size:12.5px;}
+  table{width:100%; border-collapse:collapse; font-size:13px;}
+  thead th{
+    text-align:left; font-family:var(--font-mono); font-size:10.5px; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--text-faint); padding:10px 12px; border-bottom:1px solid var(--border);
+  }
+  tbody td{padding:13px 12px; border-bottom:1px solid var(--border);}
+  tbody tr:hover{background:var(--paper);}
+  .car-cell{display:flex; align-items:center; gap:10px;}
+  .car-swatch{width:34px; height:34px; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0;}
+  .car-swatch svg{width:17px; height:17px; color:#fff;}
+  .car-name{font-weight:600; font-size:13px;}
+  .car-sub{font-size:11.5px; color:var(--text-faint);}
+  .price-cell{font-family:var(--font-mono); font-weight:600;}
+  .badge{font-family:var(--font-mono); font-size:10.5px; padding:3px 9px; border-radius:20px; font-weight:600;}
+  .badge.great{background:var(--teal-soft); color:#0C8778;}
+  .badge.fair{background:#FFF4E0; color:#9C6B0A;}
+  .badge.high{background:var(--coral-soft); color:#C0432F;}
+
+  /* ---------- CHART CARD ---------- */
+  .chart-wrap{position:relative; height:280px; margin-top:6px;}
+  .legend-row{display:flex; gap:18px; margin-top:14px; flex-wrap:wrap;}
+  .legend-row .li{display:flex; align-items:center; gap:7px; font-size:12px; color:var(--text-muted);}
+  .legend-row .dot{width:9px; height:9px; border-radius:2px;}
+
+  /* ---------- ABOUT ---------- */
+  .about-hero{
+    background:var(--ink); color:#fff; border-radius:14px; padding:38px;
+    margin-bottom:24px; position:relative; overflow:hidden;
+  }
+  .about-hero .kicker{font-family:var(--font-mono); font-size:11px; letter-spacing:.1em; color:var(--teal); text-transform:uppercase; margin-bottom:14px;}
+  .about-hero h1{font-family:var(--font-display); font-size:26px; font-weight:600; line-height:1.4; max-width:820px;}
+  .about-hero h1 .hl{color:#9DA6FF;}
+  .about-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:16px;}
+  .about-card h4{font-family:var(--font-display); font-size:14.5px; margin-bottom:8px; display:flex; align-items:center; gap:8px;}
+  .about-card p{font-size:13px; color:var(--text-muted); line-height:1.65;}
+
+  /* ---------- Dataset info ---------- */
+  .source-row{display:flex; align-items:center; justify-content:space-between; padding:16px 0; border-bottom:1px solid var(--border);}
+  .source-row:last-child{border-bottom:none;}
+  .source-left{display:flex; align-items:center; gap:13px;}
+  .source-icon{width:38px; height:38px; border-radius:9px; background:var(--paper); border:1px solid var(--border); display:flex; align-items:center; justify-content:center;}
+  .source-icon svg{width:17px; height:17px; color:var(--indigo);}
+  .source-name{font-weight:600; font-size:13.5px;}
+  .source-sub{font-size:12px; color:var(--text-faint);}
+  .source-count{font-family:var(--font-mono); font-weight:600; font-size:15px;}
+
+  /* ---------- Model performance ---------- */
+  .metric-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:24px;}
+  .metric-card{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:18px; text-align:center;}
+  .metric-card .m-val{font-family:var(--font-mono); font-size:26px; font-weight:700; color:var(--indigo-dark);}
+  .metric-card .m-lbl{font-size:11.5px; color:var(--text-muted); margin-top:4px;}
+
+  .coef-row{display:flex; align-items:center; gap:14px; padding:11px 0;}
+  .coef-name{width:150px; font-size:12.5px; font-weight:500; flex-shrink:0;}
+  .coef-bar-track{flex:1; height:8px; background:var(--paper); border-radius:5px; overflow:hidden;}
+  .coef-bar-fill{height:100%; border-radius:5px; background:linear-gradient(90deg, var(--indigo), #8C9BFF);}
+  .coef-val{width:52px; text-align:right; font-family:var(--font-mono); font-size:12px; color:var(--text-muted); flex-shrink:0;}
+
+  @media (max-width:1100px){
+    .grid-4{grid-template-columns:repeat(2,1fr);}
+    .two-col{grid-template-columns:1fr;}
+    .about-grid{grid-template-columns:1fr;}
+    .metric-grid{grid-template-columns:repeat(2,1fr);}
+    .form-grid{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ================= SIDEBAR ================= -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M3 12l1.5-5A2 2 0 016.4 5.5h11.2A2 2 0 0119.5 7L21 12M3 12v5a1 1 0 001 1h1a1 1 0 001-1v-1h12v1a1 1 0 001 1h1a1 1 0 001-1v-5M3 12h18M6.5 15.5h.01M17.5 15.5h.01" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div>
+        <div class="brand-text">Car<span>Price</span></div>
+        <div class="brand-sub">PREDICTOR · REGRESSION ENGINE</div>
+      </div>
+    </div>
+
+    <div class="nav-label">Predict</div>
+    <ul class="nav">
+      <li class="nav-item active" data-view="dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        Dashboard
+      </li>
+      <li class="nav-item" data-view="predict">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+        Predict Price
+      </li>
+      <li class="nav-item" data-view="listings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>
+        Browse Listings
+      </li>
+      <li class="nav-item" data-view="trends">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>
+        Price Trends
+      </li>
+    </ul>
+
+    <div class="nav-label">System</div>
+    <ul class="nav">
+      <li class="nav-item" data-view="dataset">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
+        Dataset Info
+      </li>
+      <li class="nav-item" data-view="performance">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="0.8" fill="currentColor"/></svg>
+        Model Performance
+      </li>
+      <li class="nav-item" data-view="about">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><circle cx="12" cy="8.2" r="0.6" fill="currentColor"/></svg>
+        About
+      </li>
+    </ul>
+
+    <div class="sidebar-footer">
+      <div class="sf-eyebrow"><span class="sf-dot"></span>Model status: live</div>
+      <p>Multiple linear regression trained on <b style="color:#D7DAE4">12,480</b> PH marketplace listings. Predictions refresh with each new field you set.</p>
+    </div>
+  </aside>
+
+  <!-- ================= MAIN ================= -->
+  <main class="main">
+    <div class="topbar">
+      <div class="topbar-title"><span class="path" id="crumb">Dashboard</span></div>
+      <div class="theme-toggle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <div class="track"><div class="knob"></div></div>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+      </div>
+    </div>
+
+    <!-- ============ DASHBOARD ============ -->
+    <section class="view active" id="view-dashboard">
+      <div class="hero">
+        <div class="hero-eyebrow">● Regression-based valuation, updated live</div>
+        <h1>Find the right price.<br>Sell <em>smart.</em> Buy <em>better.</em></h1>
+        <p>A multiple linear regression model trained on thousands of used-car listings from Philippine online marketplaces, estimating fair market value from a vehicle's specs and condition.</p>
+        <div class="equation-strip">
+          <span class="tag">MODEL</span>
+          <span class="eq">ŷ = <b>β₀</b> + <b>β₁</b>·Year + <b>β₂</b>·Mileage + <b>β₃</b>·Engine + <b>β₄</b>·Brand + <b>β₅</b>·Transmission + ε</span>
+        </div>
+        <div class="hero-stats">
+          <div class="hero-stat"><b>12,480</b><span>Listings analyzed</span></div>
+          <div class="hero-stat"><b>R² 0.91</b><span>Model fit</span></div>
+          <div class="hero-stat"><b>±₱34K</b><span>Avg. prediction error</span></div>
+          <div class="hero-stat"><b>38</b><span>Brands covered</span></div>
+        </div>
+      </div>
+
+      <div class="grid-4">
+        <div class="kpi">
+          <div class="kpi-top">
+            <div class="kpi-icon" style="background:var(--indigo-soft)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg></div>
+            <span class="delta up">▲ 4.2%</span>
+          </div>
+          <div class="val">12,480</div>
+          <div class="lbl">Total listings in dataset</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-top">
+            <div class="kpi-icon" style="background:var(--teal-soft)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></div>
+            <span class="delta up">▲ 1.8%</span>
+          </div>
+          <div class="val">₱685K</div>
+          <div class="lbl">Average listing price</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-top">
+            <div class="kpi-icon" style="background:#FFF4E0"><svg viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+            <span class="delta down">▼ 0.6%</span>
+          </div>
+          <div class="val">62,340</div>
+          <div class="lbl">Median mileage (km)</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-top">
+            <div class="kpi-icon" style="background:var(--coral-soft)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--coral)" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg></div>
+            <span class="delta up">▲ 0.9%</span>
+          </div>
+          <div class="val">91.2%</div>
+          <div class="lbl">Model accuracy (R²)</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/></svg></div><h3>Quick estimate</h3></div>
+        <div class="panel-sub">A fast 3-field version — head to <b>Predict Price</b> for the full breakdown.</div>
+        <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;">
+          <div class="field"><label>Brand</label>
+            <select id="q-brand"><option>Toyota</option><option>Honda</option><option>Mitsubishi</option><option>Ford</option><option>Nissan</option></select>
+          </div>
+          <div class="field"><label>Year</label>
+            <select id="q-year"><option>2024</option><option selected>2021</option><option>2018</option><option>2015</option><option>2012</option></select>
+          </div>
+          <div class="field"><label>Mileage (km)</label>
+            <input id="q-mileage" type="number" value="35000">
+          </div>
+        </div>
+        <button class="predict-btn" style="max-width:220px;" onclick="quickPredict()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h4"/></svg>
+          Estimate now
+        </button>
+        <div id="quick-result" style="margin-top:16px; font-family:var(--font-mono); font-size:14px; color:var(--indigo-dark); display:none;"></div>
+      </div>
+    </section>
+
+    <!-- ============ PREDICT PRICE (full form, like reference) ============ -->
+    <section class="view" id="view-predict">
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-head"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h4"/></svg></div><h3>Vehicle Information</h3></div>
+          <div class="panel-sub">Enter the details of the vehicle to predict its price.</div>
+
+          <div class="form-grid">
+            <div class="field"><label>Brand</label>
+              <select id="brand">
+                <option>Toyota</option><option>Honda</option><option>Mitsubishi</option><option>Ford</option><option>Nissan</option><option>Hyundai</option>
+              </select>
+            </div>
+            <div class="field"><label>Model</label>
+              <select id="model">
+                <option>Vios</option><option>Civic</option><option>Mirage</option><option>Ranger</option><option>Almera</option>
+              </select>
+            </div>
+            <div class="field"><label>Year</label>
+              <select id="year">
+                <option>2024</option><option>2023</option><option>2022</option><option selected>2021</option><option>2020</option><option>2019</option><option>2018</option><option>2017</option><option>2016</option><option>2015</option>
+              </select>
+            </div>
+            <div class="field"><label>Mileage (km)</label>
+              <input id="mileage" type="number" value="35000">
+            </div>
+            <div class="field"><label>Fuel Type</label>
+              <select id="fuel"><option>Gasoline</option><option>Diesel</option><option>Hybrid</option></select>
+            </div>
+            <div class="field"><label>Transmission</label>
+              <select id="trans"><option>Automatic</option><option>Manual</option><option>CVT</option></select>
+            </div>
+            <div class="field"><label>Engine Capacity</label>
+              <select id="engine"><option>1.0 L</option><option selected>1.3 L</option><option>1.5 L</option><option>1.8 L</option><option>2.0 L+</option></select>
+            </div>
+            <div class="field"><label>Body Type</label>
+              <select id="body"><option>Sedan</option><option>Hatchback</option><option>SUV</option><option>Pickup</option><option>MPV</option></select>
+            </div>
+            <div class="field"><label>No. of Owners <span class="opt">(Optional)</span></label>
+              <select id="owners"><option>1</option><option>2</option><option>3+</option></select>
+            </div>
+            <div class="field"><label>Color <span class="opt">(Optional)</span></label>
+              <select id="color"><option>White</option><option>Black</option><option>Silver</option><option>Red</option><option>Blue</option></select>
+            </div>
+          </div>
+
+          <button class="predict-btn" onclick="fullPredict()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h4"/></svg>
+            Predict Price
+          </button>
+        </div>
+
+        <div>
+          <div class="panel">
+            <div class="panel-head"><div class="ic" style="background:var(--teal-soft)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2"><path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"/></svg></div><h3>Estimated Price</h3></div>
+            <div class="panel-sub">Based on the information you provided.</div>
+
+            <div class="price-box">
+              <div class="lbl">Estimated Market Price</div>
+              <div class="amt"><span>₱</span><span id="out-price">642,000</span></div>
+              <div class="range">Confidence Range · <b id="out-range">₱608,000 – ₱678,000</b></div>
+            </div>
+
+            <div class="breakdown">
+              <div class="row"><span>Base price (similar listings)</span><span class="amt" id="b-base">₱620,000</span></div>
+              <div class="row"><span>Mileage adjustment</span><span class="amt neg" id="b-mileage">−₱18,000 ▼</span></div>
+              <div class="row"><span>Year adjustment</span><span class="amt pos" id="b-year">+₱25,000 ▲</span></div>
+              <div class="row"><span>Condition &amp; market demand</span><span class="amt pos" id="b-cond">+₱15,000 ▲</span></div>
+              <div class="row total"><span>Estimated price</span><span class="amt" id="b-total">₱642,000</span></div>
+            </div>
+
+            <div class="note">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v.01M12 11v5"/></svg>
+              <span><b>Note:</b> this is a regression-based estimate. Actual price may vary depending on the vehicle's real condition and negotiation factors.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ BROWSE LISTINGS ============ -->
+    <section class="view" id="view-listings">
+      <div class="panel">
+        <div class="panel-head"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg></div><h3>Browse Listings</h3></div>
+        <div class="panel-sub">Sample listings pulled from the training dataset, shown against the model's predicted price.</div>
+
+        <div class="filters">
+          <select><option>All brands</option><option>Toyota</option><option>Honda</option><option>Mitsubishi</option></select>
+          <select><option>All body types</option><option>Sedan</option><option>SUV</option><option>Pickup</option></select>
+          <input type="text" placeholder="Search model…">
+        </div>
+
+        <table>
+          <thead><tr><th>Vehicle</th><th>Year</th><th>Mileage</th><th>Listed Price</th><th>Predicted</th><th>Deal</th></tr></thead>
+          <tbody id="listings-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ PRICE TRENDS ============ -->
+    <section class="view" id="view-trends">
+      <div class="grid-4" style="grid-template-columns:repeat(3,1fr);">
+        <div class="kpi"><div class="val">+3.1%</div><div class="lbl">YoY sedan price change</div></div>
+        <div class="kpi"><div class="val">−6.4%</div><div class="lbl">YoY diesel SUV change</div></div>
+        <div class="kpi"><div class="val">₱48/km</div><div class="lbl">Avg. mileage depreciation</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/></svg></div><h3>Average price by body type, 2019–2026</h3></div>
+        <div class="panel-sub">Median listing price across the dataset, by year and body type.</div>
+        <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+        <div class="legend-row">
+          <div class="li"><span class="dot" style="background:#4F5FFF"></span>Sedan</div>
+          <div class="li"><span class="dot" style="background:#12B8A2"></span>SUV</div>
+          <div class="li"><span class="dot" style="background:#F5A623"></span>Pickup</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ DATASET INFO ============ -->
+    <section class="view" id="view-dataset">
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-head"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/></svg></div><h3>Data Sources</h3></div>
+          <div class="panel-sub">Listings were aggregated and cleaned from the following sources.</div>
+
+          <div class="source-row">
+            <div class="source-left"><div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3z"/><path d="M8 8h8v8H8z"/></svg></div>
+              <div><div class="source-name">Kaggle Datasets</div><div class="source-sub">Public used-vehicle listing archives</div></div></div>
+            <div class="source-count">4,120</div>
+          </div>
+          <div class="source-row">
+            <div class="source-left"><div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div>
+              <div><div class="source-name">AutoDeal.ph</div><div class="source-sub">Philippine dealer &amp; private listings</div></div></div>
+            <div class="source-count">3,860</div>
+          </div>
+          <div class="source-row">
+            <div class="source-left"><div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/></svg></div>
+              <div><div class="source-name">Carmudi Philippines</div><div class="source-sub">Marketplace scrape, cleaned duplicates removed</div></div></div>
+            <div class="source-count">2,910</div>
+          </div>
+          <div class="source-row">
+            <div class="source-left"><div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16M4 6h16M4 18h16"/></svg></div>
+              <div><div class="source-name">Philkotse.com</div><div class="source-sub">Regional listings, provincial pricing</div></div></div>
+            <div class="source-count">1,590</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2"><path d="M4 19h16M6 15V9M12 15V5M18 15v-3"/></svg></div><h3>Feature Coverage</h3></div>
+          <div class="panel-sub">Fields captured per listing.</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">
+            <span class="badge fair">Brand</span><span class="badge fair">Model</span><span class="badge fair">Year</span>
+            <span class="badge fair">Mileage</span><span class="badge fair">Fuel type</span><span class="badge fair">Transmission</span>
+            <span class="badge fair">Engine capacity</span><span class="badge fair">Body type</span><span class="badge fair">Owners</span>
+            <span class="badge fair">Color</span><span class="badge fair">Region</span><span class="badge fair">Listed price</span>
+          </div>
+          <div class="note" style="margin-top:20px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v.01M12 11v5"/></svg>
+            <span>Records with missing price or year were dropped during cleaning; ~8.6% of raw scraped rows were excluded.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ MODEL PERFORMANCE ============ -->
+    <section class="view" id="view-performance">
+      <div class="metric-grid">
+        <div class="metric-card"><div class="m-val">0.91</div><div class="m-lbl">R² (coefficient of determination)</div></div>
+        <div class="metric-card"><div class="m-val">₱34.2K</div><div class="m-lbl">MAE</div></div>
+        <div class="metric-card"><div class="m-val">₱48.7K</div><div class="m-lbl">RMSE</div></div>
+        <div class="metric-card"><div class="m-val">5.1%</div><div class="m-lbl">MAPE</div></div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-head"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div><h3>Actual vs. predicted price</h3></div>
+          <div class="panel-sub">Held-out test set, 2,496 listings.</div>
+          <div class="chart-wrap"><canvas id="scatterChart"></canvas></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2"><path d="M4 19h16M6 15V9M12 15V5M18 15v-3"/></svg></div><h3>Standardized coefficients</h3></div>
+          <div class="panel-sub">Relative influence of each feature on predicted price.</div>
+          <div id="coef-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ABOUT ============ -->
+    <section class="view" id="view-about">
+      <div class="about-hero">
+        <div class="kicker">Undergraduate thesis · Information Technology</div>
+        <h1>Estimating the <span class="hl">Right Price:</span> Development of a Used Vehicle Price Prediction System using Online Marketplace Data</h1>
+      </div>
+
+      <div class="about-grid">
+        <div class="panel about-card">
+          <h4>🎯 Problem</h4>
+          <p>Buyers and sellers in the Philippine used-car market rely on guesswork and scattered listings to judge a fair price, leading to overpricing, underselling, and long negotiation cycles.</p>
+        </div>
+        <div class="panel about-card">
+          <h4>🧮 Approach</h4>
+          <p>Listings were scraped and cleaned from four online marketplaces, then used to train a multiple linear regression model that maps vehicle attributes to an expected market price.</p>
+        </div>
+        <div class="panel about-card">
+          <h4>📊 Output</h4>
+          <p>The system returns a point estimate, a confidence range, and a feature-by-feature breakdown so users understand <em>why</em> a car is priced the way it is — not just the number.</p>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:16px;">
+        <div class="panel-head"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2"><path d="M3 17l6-6 4 4 8-8"/></svg></div><h3>Why regression</h3></div>
+        <div class="panel-sub">Model choice and what it trades off.</div>
+        <p style="font-size:13.5px; color:var(--text-muted); line-height:1.75; max-width:760px;">
+          Multiple linear regression was chosen for its interpretability: every coefficient can be read on its own as the peso effect of one feature, which matters for a tool meant to explain a price rather than just output one. Tree-based models (random forest, gradient boosting) were tested as a comparison baseline and improved raw accuracy slightly, but at the cost of the transparent, per-feature breakdown shown on the Predict Price page — a deliberate trade-off given the system's goal of building user trust in the estimate.
+        </p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+/* ---------------- NAVIGATION ---------------- */
+const navItems = document.querySelectorAll('.nav-item');
+const views = document.querySelectorAll('.view');
+const crumb = document.getElementById('crumb');
+const titles = {dashboard:'Dashboard', predict:'Predict Price', listings:'Browse Listings', trends:'Price Trends', dataset:'Dataset Info', performance:'Model Performance', about:'About'};
+
+navItems.forEach(item=>{
+  item.addEventListener('click', ()=>{
+    navItems.forEach(i=>i.classList.remove('active'));
+    item.classList.add('active');
+    const target = item.dataset.view;
+    views.forEach(v=>v.classList.remove('active'));
+    document.getElementById('view-'+target).classList.add('active');
+    crumb.textContent = titles[target];
+    window.scrollTo({top:0, behavior:'smooth'});
+  });
+});
+
+/* ---------------- TOY REGRESSION MODEL ---------------- */
+// Simple illustrative linear formula so "Predict Price" actually responds to inputs.
+const brandBase = {Toyota:640000, Honda:660000, Mitsubishi:560000, Ford:720000, Nissan:600000, Hyundai:590000};
+const engineMult = {'1.0 L':0.9,'1.3 L':1,'1.5 L':1.08,'1.8 L':1.18,'2.0 L+':1.32};
+const bodyMult = {Sedan:1, Hatchback:0.92, SUV:1.25, Pickup:1.2, MPV:1.05};
+
+function fmt(n){ return Math.round(n).toLocaleString('en-PH'); }
+
+function computePrice({brand, year, mileage, engine, body, trans, fuel}){
+  const base = (brandBase[brand]||600000) * (engineMult[engine]||1) * (bodyMult[body]||1);
+  const yearAdj = (year - 2015) * 12500;              // newer = pricier
+  const mileageAdj = -Math.max(0, mileage - 20000) * 0.55; // penalty above 20k km
+  const transAdj = trans === 'Automatic' ? 12000 : trans === 'CVT' ? 9000 : 0;
+  const fuelAdj = fuel === 'Diesel' ? 8000 : fuel === 'Hybrid' ? 22000 : 0;
+  const condAdj = 15000; // flat "condition & demand" term, mirrors the reference breakdown
+  const total = base + yearAdj + mileageAdj + transAdj + fuelAdj + condAdj;
+  return {base, yearAdj, mileageAdj, condAdj: condAdj + transAdj + fuelAdj, total};
+}
+
+function fullPredict(){
+  const brand = document.getElementById('brand').value;
+  const year = parseInt(document.getElementById('year').value);
+  const mileage = parseInt(document.getElementById('mileage').value) || 0;
+  const engine = document.getElementById('engine').value;
+  const body = document.getElementById('body').value;
+  const trans = document.getElementById('trans').value;
+  const fuel = document.getElementById('fuel').value;
+
+  const r = computePrice({brand, year, mileage, engine, body, trans, fuel});
+
+  document.getElementById('out-price').textContent = fmt(r.total);
+  document.getElementById('out-range').textContent = '₱' + fmt(r.total*0.947) + ' – ₱' + fmt(r.total*1.053);
+  document.getElementById('b-base').textContent = '₱' + fmt(r.base);
+  document.getElementById('b-mileage').textContent = (r.mileageAdj<0?'−':'+') + '₱' + fmt(Math.abs(r.mileageAdj)) + (r.mileageAdj<0?' ▼':' ▲');
+  document.getElementById('b-mileage').className = 'amt ' + (r.mileageAdj<0?'neg':'pos');
+  document.getElementById('b-year').textContent = (r.yearAdj<0?'−':'+') + '₱' + fmt(Math.abs(r.yearAdj)) + (r.yearAdj<0?' ▼':' ▲');
+  document.getElementById('b-year').className = 'amt ' + (r.yearAdj<0?'neg':'pos');
+  document.getElementById('b-cond').textContent = '+₱' + fmt(r.condAdj) + ' ▲';
+  document.getElementById('b-total').textContent = '₱' + fmt(r.total);
+}
+
+function quickPredict(){
+  const brand = document.getElementById('q-brand').value;
+  const year = parseInt(document.getElementById('q-year').value);
+  const mileage = parseInt(document.getElementById('q-mileage').value) || 0;
+  const r = computePrice({brand, year, mileage, engine:'1.3 L', body:'Sedan', trans:'Automatic', fuel:'Gasoline'});
+  const box = document.getElementById('quick-result');
+  box.style.display = 'block';
+  box.innerHTML = 'Estimated price → <b>₱' + fmt(r.total) + '</b> &nbsp;·&nbsp; range ₱' + fmt(r.total*0.95) + '–₱' + fmt(r.total*1.05);
+}
+
+/* ---------------- SAMPLE LISTINGS TABLE ---------------- */
+const listings = [
+  {brand:'Toyota', model:'Vios 1.3 XE', year:2021, mileage:35000, listed:655000, color:'#4F5FFF'},
+  {brand:'Honda', model:'Civic RS Turbo', year:2020, mileage:28000, listed:1120000, color:'#12B8A2'},
+  {brand:'Mitsubishi', model:'Mirage G4 GLX', year:2019, mileage:52000, listed:498000, color:'#F5A623'},
+  {brand:'Ford', model:'Ranger Wildtrak', year:2022, mileage:19000, listed:1580000, color:'#FF6B57'},
+  {brand:'Nissan', model:'Almera 1.0 VL Turbo', year:2023, mileage:8000, listed:840000, color:'#4F5FFF'},
+  {brand:'Toyota', model:'Fortuner 2.4 V', year:2018, mileage:71000, listed:1350000, color:'#12B8A2'},
+];
+const tbody = document.getElementById('listings-body');
+listings.forEach(l=>{
+  const r = computePrice({brand:l.brand, year:l.year, mileage:l.mileage, engine:'1.3 L', body:'Sedan', trans:'Automatic', fuel:'Gasoline'});
+  const diffPct = (l.listed - r.total) / r.total;
+  let badge = '<span class="badge great">Great deal</span>';
+  if(diffPct > 0.08) badge = '<span class="badge high">Overpriced</span>';
+  else if(diffPct > -0.03) badge = '<span class="badge fair">Fair price</span>';
+
+  const row = document.createElement('tr');
+  row.innerHTML = `
+    <td><div class="car-cell">
+      <div class="car-swatch" style="background:${l.color}"><svg viewBox="0 0 24 24" fill="none"><path d="M3 12l1.5-5A2 2 0 016.4 5.5h11.2A2 2 0 0119.5 7L21 12M3 12v5a1 1 0 001 1h1a1 1 0 001-1v-1h12v1a1 1 0 001 1h1a1 1 0 001-1v-5M3 12h18" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div><div class="car-name">${l.brand} ${l.model}</div><div class="car-sub">${l.mileage.toLocaleString()} km · ${l.year}</div></div>
+    </div></td>
+    <td>${l.year}</td>
+    <td>${l.mileage.toLocaleString()} km</td>
+    <td class="price-cell">₱${l.listed.toLocaleString()}</td>
+    <td class="price-cell">₱${fmt(r.total)}</td>
+    <td>${badge}</td>
+  `;
+  tbody.appendChild(row);
+});
+
+/* ---------------- CHARTS ---------------- */
+Chart.defaults.font.family = "'Inter', sans-serif";
+Chart.defaults.color = '#6B7280';
+
+new Chart(document.getElementById('trendChart'), {
+  type:'line',
+  data:{
+    labels:['2019','2020','2021','2022','2023','2024','2025','2026'],
+    datasets:[
+      {label:'Sedan', data:[560000,572000,590000,610000,628000,642000,655000,668000], borderColor:'#4F5FFF', backgroundColor:'rgba(79,95,255,.08)', fill:true, tension:.35, borderWidth:2.5, pointRadius:0},
+      {label:'SUV', data:[980000,1005000,1040000,1080000,1120000,1160000,1195000,1230000], borderColor:'#12B8A2', backgroundColor:'rgba(18,184,162,.06)', fill:true, tension:.35, borderWidth:2.5, pointRadius:0},
+      {label:'Pickup', data:[1100000,1120000,1150000,1210000,1280000,1350000,1400000,1450000], borderColor:'#F5A623', backgroundColor:'rgba(245,166,35,.06)', fill:true, tension:.35, borderWidth:2.5, pointRadius:0},
+    ]
+  },
+  options:{
+    plugins:{legend:{display:false}},
+    scales:{
+      y:{grid:{color:'#EEF0F3'}, ticks:{callback:v=>'₱'+(v/1000)+'K'}},
+      x:{grid:{display:false}}
+    }
+  }
+});
+
+new Chart(document.getElementById('scatterChart'), {
+  type:'scatter',
+  data:{datasets:[{
+    label:'Test listings',
+    data: Array.from({length:70}, ()=> {
+      const actual = 250000 + Math.random()*1400000;
+      const predicted = actual + (Math.random()-0.5) * actual * 0.18;
+      return {x:actual, y:predicted};
+    }),
+    backgroundColor:'rgba(79,95,255,.55)',
+  },{
+    label:'Perfect prediction',
+    type:'line',
+    data:[{x:200000,y:200000},{x:1700000,y:1700000}],
+    borderColor:'#FF6B57', borderDash:[6,5], borderWidth:1.5, pointRadius:0,
+  }]},
+  options:{
+    plugins:{legend:{display:false}},
+    scales:{
+      x:{title:{display:true,text:'Actual price (₱)'}, grid:{color:'#EEF0F3'}, ticks:{callback:v=>(v/1000)+'K'}},
+      y:{title:{display:true,text:'Predicted price (₱)'}, grid:{color:'#EEF0F3'}, ticks:{callback:v=>(v/1000)+'K'}}
+    }
+  }
+});
+
+const coefs = [
+  {name:'Year', val:0.86}, {name:'Mileage', val:-0.71}, {name:'Engine capacity', val:0.52},
+  {name:'Brand (premium)', val:0.47}, {name:'Body type (SUV/PU)', val:0.38}, {name:'Transmission (auto)', val:0.21}, {name:'No. of owners', val:-0.17},
+];
+const coefList = document.getElementById('coef-list');
+coefs.forEach(c=>{
+  const pct = Math.abs(c.val)*100;
+  const div = document.createElement('div');
+  div.className = 'coef-row';
+  div.innerHTML = `<div class="coef-name">${c.name}</div>
+    <div class="coef-bar-track"><div class="coef-bar-fill" style="width:${pct}%; ${c.val<0?'background:linear-gradient(90deg,#FF6B57,#FF9C8C)':''}"></div></div>
+    <div class="coef-val">${c.val>0?'+':''}${c.val.toFixed(2)}</div>`;
+  coefList.appendChild(div);
+});
+</script>
+</body>
+</html>
