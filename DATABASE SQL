@@ -1,0 +1,115 @@
+-- phpMyAdmin SQL Dump
+-- version 5.2.1
+-- https://www.phpmyadmin.net/
+--
+-- Host: 127.0.0.1
+-- Generation Time: Sep 01, 2026 at 06:12 PM
+-- Server version: 10.4.32-MariaDB
+-- PHP Version: 8.2.12
+
+SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
+START TRANSACTION;
+SET time_zone = "+00:00";
+
+
+/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
+/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
+/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
+/*!40101 SET NAMES utf8mb4 */;
+
+--
+-- Database: `vehicle_predictor`
+--
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `reference_weights`
+--
+
+CREATE TABLE `reference_weights` (
+  `id` int(11) NOT NULL,
+  `vehicle_type` varchar(20) NOT NULL,
+  `brand` varchar(50) NOT NULL,
+  `model` varchar(50) NOT NULL,
+  `base_price` decimal(12,2) NOT NULL,
+  `yearly_depreciation` decimal(10,2) NOT NULL,
+  `mileage_penalty` decimal(10,4) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dumping data for table `reference_weights`
+--
+
+INSERT INTO `reference_weights` (`id`, `vehicle_type`, `brand`, `model`, `base_price`, `yearly_depreciation`, `mileage_penalty`) VALUES
+(1, 'Car', 'Toyota', 'Vios', 850000.00, 45000.00, 0.5500),
+(2, 'Car', 'Honda', 'Civic', 1200000.00, 65000.00, 0.6000),
+(3, 'Motorcycle', 'Yamaha', 'NMAX', 150000.00, 12000.00, 0.2500),
+(4, 'Motorcycle', 'Honda', 'Click 125i', 80000.00, 6000.00, 0.1500),
+(5, 'Bicycle', 'Trek', 'Marlin 7', 45000.00, 4000.00, 0.0500);
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `vehicle_listings`
+--
+
+CREATE TABLE `vehicle_listings` (
+  `id` int(11) NOT NULL,
+  `vehicle_type` varchar(20) NOT NULL,
+  `brand` varchar(50) NOT NULL,
+  `model` varchar(50) NOT NULL,
+  `year_manufactured` int(11) NOT NULL,
+  `mileage` int(11) NOT NULL,
+  `color` varchar(30) DEFAULT NULL,
+  `transmission` varchar(20) DEFAULT NULL,
+  `fuel_type` varchar(20) DEFAULT NULL,
+  `modifications` varchar(50) DEFAULT 'Stock / None',
+  `registration_status` varchar(30) DEFAULT 'Updated',
+  `maintenance_history` varchar(50) DEFAULT 'Average',
+  `accident_history` varchar(50) DEFAULT 'None',
+  `asking_price` decimal(12,2) DEFAULT NULL,
+  `price_negotiability` varchar(30) DEFAULT 'Fixed Price',
+  `location` varchar(100) DEFAULT NULL,
+  `inclusions` text DEFAULT NULL,
+  `reason_for_selling` text DEFAULT NULL,
+  `predicted_value` decimal(12,2) DEFAULT NULL,
+  `date_added` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Indexes for dumped tables
+--
+
+--
+-- Indexes for table `reference_weights`
+--
+ALTER TABLE `reference_weights`
+  ADD PRIMARY KEY (`id`);
+
+--
+-- Indexes for table `vehicle_listings`
+--
+ALTER TABLE `vehicle_listings`
+  ADD PRIMARY KEY (`id`);
+
+--
+-- AUTO_INCREMENT for dumped tables
+--
+
+--
+-- AUTO_INCREMENT for table `reference_weights`
+--
+ALTER TABLE `reference_weights`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+
+--
+-- AUTO_INCREMENT for table `vehicle_listings`
+--
+ALTER TABLE `vehicle_listings`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+COMMIT;
+
+/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
+/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
+/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
