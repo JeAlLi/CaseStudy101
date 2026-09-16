@@ -18,7 +18,8 @@
     </div>
     <div class="nav-label">System</div>  
     <div class="nav">
-      <a href="dashboard.php" class="nav-item">Queue</a>
+      <a href="dashboard.php" class="nav-item">Admin Dashboard</a>
+      <a href="pending_listings.php" class="nav-item">Pending Listings</a>
       <a href="add_listing.php" class="nav-item">Add Listing</a>
       <a href="manage_listings.php" class="nav-item">Manage Listings</a>
       <a href="../dashboard.php" class="nav-item">View Public Site</a>
