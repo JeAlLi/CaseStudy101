@@ -13,10 +13,12 @@ $REGISTRATIONS = ['Updated', 'Expired', 'Unknown'];
 $MAINTENANCE   = ['Excellent', 'Good', 'Average', 'Poor'];
 $ACCIDENTS     = ['None', 'Minor', 'Major', 'Unknown'];
 
-$REGISTRATION_ADJ = ['Updated' => 0, 'Expired' => -8000, 'Unknown' => -3000];
-$MAINTENANCE_ADJ  = ['Excellent' => 15000, 'Good' => 5000, 'Average' => 0, 'Poor' => -10000];
-$ACCIDENT_ADJ     = ['None' => 0, 'Minor' => -12000, 'Major' => -45000, 'Unknown' => -5000];
-$MODIFICATION_ADJ = ['Stock / None' => 0, 'Minor Modifications' => -3000, 'Major Modifications' => -20000];
+$REGISTRATION_PCT = ['Updated' => 0.0, 'Expired' => -0.075, 'Unknown' => -0.03];
+$MAINTENANCE_PCT  = ['Excellent' => 0.0, 'Good' => -0.015, 'Average' => -0.075, 'Poor' => -0.20];
+$ACCIDENT_PCT     = ['None' => 0.0, 'Minor' => -0.10, 'Major' => -0.175, 'Unknown' => -0.05];
+$MODIFICATION_PCT = ['Stock / None' => 0.0, 'Minor Modifications' => -0.04, 'Major Modifications' => -0.125];
+
+// ... (scroll down to the database calculation block) ...
 
 $f = $_POST;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_listing'])) {
@@ -87,9 +89,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_listing'])) {
         if ($vehicle_data) {
             $age = max(0, $current_year - $year);
             $base = (float)$vehicle_data['base_price'];
-            $year_adj = $age * (float)$vehicle_data['yearly_depreciation'];
-            $mileage_adj = $mileage * (float)$vehicle_data['mileage_penalty'];
-            $cond_adj = $REGISTRATION_ADJ[$registration] + $MAINTENANCE_ADJ[$maintenance] + $ACCIDENT_ADJ[$accidents] + $MODIFICATION_ADJ[$modifications];
+            
+            $age_pct = min(0.80, $age * 0.09);
+            $year_adj = $base * $age_pct;
+            
+            $mileage_pct = min(0.20, ($mileage / 10000) * 0.015);
+            $mileage_adj = $base * $mileage_pct;
+            
+            $cond_pct = $REGISTRATION_PCT[$registration] + $MAINTENANCE_PCT[$maintenance] + $ACCIDENT_PCT[$accidents] + $MODIFICATION_PCT[$modifications];
+            $cond_adj = $base * $cond_pct;
+            
             $final_price = max(1000, $base - $year_adj - $mileage_adj + $cond_adj);
             
             // Blend with market data
