@@ -26,12 +26,21 @@ include 'header.php';
 
 <div class="view" style="display: block;">
   <div class="panel">
-    <div class="panel-head">
-      <div class="ic" style="background:var(--coral-soft);"><svg viewBox="0 0 24 24" fill="none" stroke="var(--coral)" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></div>
-      <h3>Manage Listings</h3>
+<div class="panel-head" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
+      <div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="ic" style="background:var(--coral-soft);"><svg viewBox="0 0 24 24" fill="none" stroke="var(--coral)" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></div>
+          <h3 style="margin: 0;">Manage Listings</h3>
+        </div>
+        <div class="panel-sub" style="margin-top: 8px;">View, edit, or permanently remove processed listings to maintain dataset accuracy.</div>
+      </div>
+      
+      <!-- CSV Export Button -->
+      <a href="export.php" class="predict-btn" style="text-decoration: none; display: inline-flex; width: auto; padding: 10px 16px; background: var(--teal);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; margin-right: 8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        Export as CSV
+      </a>
     </div>
-    <div class="panel-sub">View, edit, or permanently remove processed listings to maintain dataset accuracy.</div>
-    
     <div class="table-scroll">
       <table>
         <thead>
