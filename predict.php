@@ -68,24 +68,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['predict'])) {
         $errors['mileage'] = 'Invalid mileage.';
     }
 
-    if (empty($errors)) {
+if (empty($errors)) {
         $year = (int)$year_raw;
         $mileage = (int)$mileage_raw;
         
-        // 1. Prepare data for the Machine Learning Model
         $ml_input = [
-            'brand' => $brand,
-            'model' => $model,
-            'year_manufactured' => $year,
-            'mileage' => $mileage,
-            'transmission' => $transmission,
-            'fuel_type' => $fuel_type
+            'brand' => $brand, 'model' => $model, 'year_manufactured' => $year,
+            'mileage' => $mileage, 'transmission' => $transmission, 'fuel_type' => $fuel_type
         ];
         
-        // 2. Encode to Base64 to safely bypass Windows command line quote stripping
         $b64_input = base64_encode(json_encode($ml_input));
-        
-        // 3. Execute the Python microservice
         $command = "python ml_predict.py " . escapeshellarg($b64_input);
         $output = shell_exec($command);
         $result = json_decode($output, true);
@@ -93,27 +85,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['predict'])) {
         if ($result && $result['status'] === 'success') {
             $ml_base_price = (float)$result['predicted_price'];
             
-            // 4. Apply Physical Condition Modifiers
-            // (Because scrapped data rarely has normalized condition/maintenance info, 
-            // we apply your condition heuristics AFTER the regression engine establishes the baseline)
-            $cond_pct = $REGISTRATION_PCT[$registration] + $MAINTENANCE_PCT[$maintenance] + $ACCIDENT_PCT[$accidents] + $MODIFICATION_PCT[$modifications];
-            $cond_adj = $ml_base_price * $cond_pct;
+            // Calculate exact peso penalties for the UI breakdown
+            $reg_penalty = $ml_base_price * $REGISTRATION_PCT[$registration];
+            $maint_penalty = $ml_base_price * $MAINTENANCE_PCT[$maintenance];
+            $acc_penalty = $ml_base_price * $ACCIDENT_PCT[$accidents];
+            $mod_penalty = $ml_base_price * $MODIFICATION_PCT[$modifications];
             
+            $cond_adj = $reg_penalty + $maint_penalty + $acc_penalty + $mod_penalty;
             $final_price = $ml_base_price + $cond_adj;
-            $estimated_price = max(1000, $final_price);
             
+            $estimated_price = max(1000, $final_price);
             $range_low  = $estimated_price * 0.92;
             $range_high = $estimated_price * 1.08;
             
-            // Set breakdown variables for the UI
+            // Detailed Breakdown Array
             $breakdown = [
-                'has_ref' => false,
-                'base' => $ml_base_price,
-                'cond_adj' => $cond_adj,
-                'market_used' => true,
-                'listing_count' => "All Active"
+                'ml_base' => $ml_base_price,
+                'reg_val' => $reg_penalty,
+                'maint_val' => $maint_penalty,
+                'acc_val' => $acc_penalty,
+                'mod_val' => $mod_penalty,
+                'total_adj' => $cond_adj
             ];
-            
         } else {
             $error_msg = $result['message'] ?? 'Unknown execution error.';
             $errors['model'] = "Machine Learning Engine failed: " . htmlspecialchars($error_msg);
@@ -187,56 +180,68 @@ include 'header.php';
     
     <!-- RESULT PANEL -->
     <div>
-      <div class="panel">
+      <div class="panel" style="position: sticky; top: 20px;">
         <div class="panel-head">
           <div class="ic" style="background:var(--teal-soft);"><svg viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2"><path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"/></svg></div>
-          <h3>Estimated Price</h3>
+          <h3>Valuation Report</h3>
         </div>
         
         <?php if ($estimated_price !== null): ?>
-            <div class="price-box">
-              <div class="lbl">Estimated Market Value</div>
+            <div class="price-box" style="margin-bottom: 24px;">
+              <div class="lbl">Estimated Fair Market Value</div>
               <div class="amt">₱<?php echo number_format($estimated_price); ?></div>
-              <div class="range">Possible Range<br><b>₱<?php echo number_format($range_low); ?> - ₱<?php echo number_format($range_high); ?></b></div>
+              <div class="range">Expected Negotiation Range<br><b>₱<?php echo number_format($range_low); ?> - ₱<?php echo number_format($range_high); ?></b></div>
             </div>
             
-            <div class="breakdown">
-              <?php if ($breakdown['has_ref']): ?>
-                  <div class="row"><span>Base price (Reference SRP)</span><span class="amt">₱<?php echo number_format($breakdown['base']); ?></span></div>
-                  <div class="row"><span>Age depreciation</span><span class="amt neg">-₱<?php echo number_format($breakdown['year_adj']); ?></span></div>
-                  <div class="row"><span>Mileage adjustment</span><span class="amt neg">-₱<?php echo number_format($breakdown['mileage_adj']); ?></span></div>
-              <?php else: ?>
-                  <div class="row" style="background: var(--coral-soft); margin: -4px -14px; padding: 10px 14px; border-radius: 6px;">
-                      <span style="color: var(--coral); font-weight: 500;">Market Baseline Used (No SRP on file)</span>
-                      <span class="amt">₱<?php echo number_format($breakdown['base']); ?></span>
-                  </div>
-                  <p style="font-size: 12px; color: var(--gray); line-height: 1.4; margin-bottom: 12px;">*Age and mileage depreciation are organically factored into live market averages.</p>
-              <?php endif; ?>
+            <div class="breakdown" style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; background: #fafafa;">
               
-              <?php if ($breakdown['market_used']): ?>
-                  <div class="row" style="background: var(--indigo-soft); margin: -4px -14px; padding: 10px 14px; border-radius: 6px;">
-                      <span style="color: var(--indigo-dark); font-weight: 500;">Market adjustment (<?php echo $breakdown['listing_count']; ?> live listings)</span>
-                      <span class="amt pos" style="color: var(--indigo-dark);">Applied</span>
-                  </div>
-              <?php endif; ?>
-
+              <!-- PHASE 1: Machine Learning -->
+              <h4 style="margin: 0 0 12px 0; font-size: 13px; color: #4f46e5; text-transform: uppercase; letter-spacing: 0.5px;">Phase 1: Regression Baseline</h4>
+              <p style="font-size: 11px; color: #6b7280; margin-bottom: 12px; line-height: 1.4;">Based on Market Data for Year, Mileage, Transmission, and Fuel Type.</p>
+              
+              <div class="row" style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px dashed #d1d5db;">
+                  <span style="font-weight: 600; color: #111827;">Statistical Market Average</span>
+                  <span class="amt" style="font-weight: 600;">₱<?php echo number_format($breakdown['ml_base']); ?></span>
+              </div>
+              
+              <!-- PHASE 2: Heuristics -->
+              <h4 style="margin: 0 0 12px 0; font-size: 13px; color: #d97706; text-transform: uppercase; letter-spacing: 0.5px;">Phase 2: Heuristic Adjustments</h4>
+              <p style="font-size: 11px; color: #6b7280; margin-bottom: 12px; line-height: 1.4;">Condition penalties applied to the statistical baseline.</p>
+              
               <div class="row">
-                  <span>Condition impact</span>
-                  <?php if ($breakdown['cond_adj'] >= 0): ?>
-                      <span class="amt pos">+₱<?php echo number_format($breakdown['cond_adj']); ?></span>
+                  <span>Registration (<?php echo htmlspecialchars($f['registration'] ?? 'Updated'); ?>)</span>
+                  <span class="amt <?php echo $breakdown['reg_val'] < 0 ? 'neg' : 'pos'; ?>"><?php echo $breakdown['reg_val'] < 0 ? '-' : '+'; ?>₱<?php echo number_format(abs($breakdown['reg_val'])); ?></span>
+              </div>
+              <div class="row">
+                  <span>Maintenance (<?php echo htmlspecialchars($f['maintenance'] ?? 'Average'); ?>)</span>
+                  <span class="amt <?php echo $breakdown['maint_val'] < 0 ? 'neg' : 'pos'; ?>"><?php echo $breakdown['maint_val'] < 0 ? '-' : '+'; ?>₱<?php echo number_format(abs($breakdown['maint_val'])); ?></span>
+              </div>
+              <div class="row">
+                  <span>Accidents (<?php echo htmlspecialchars($f['accidents'] ?? 'None'); ?>)</span>
+                  <span class="amt <?php echo $breakdown['acc_val'] < 0 ? 'neg' : 'pos'; ?>"><?php echo $breakdown['acc_val'] < 0 ? '-' : '+'; ?>₱<?php echo number_format(abs($breakdown['acc_val'])); ?></span>
+              </div>
+              <div class="row">
+                  <span>Modifications (<?php echo htmlspecialchars($f['modifications'] ?? 'Stock'); ?>)</span>
+                  <span class="amt <?php echo $breakdown['mod_val'] < 0 ? 'neg' : 'pos'; ?>"><?php echo $breakdown['mod_val'] < 0 ? '-' : '+'; ?>₱<?php echo number_format(abs($breakdown['mod_val'])); ?></span>
+              </div>
+              
+              <!-- TOTALS -->
+              <div class="row" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb;">
+                  <span style="font-weight: 600; color: #374151;">Total Condition Impact</span>
+                  <?php if ($breakdown['total_adj'] >= 0): ?>
+                      <span class="amt pos" style="font-weight: 600;">+₱<?php echo number_format($breakdown['total_adj']); ?></span>
                   <?php else: ?>
-                      <span class="amt neg">-₱<?php echo number_format(abs($breakdown['cond_adj'])); ?></span>
+                      <span class="amt neg" style="font-weight: 600;">-₱<?php echo number_format(abs($breakdown['total_adj'])); ?></span>
                   <?php endif; ?>
               </div>
-              <div class="row total"><span>Estimated price</span><span class="amt">₱<?php echo number_format($estimated_price); ?></span></div>
+              
             </div>
+            
         <?php else: ?>
-            <div class="empty-state">Fill out the form to generate a valuation.</div>
+            <div class="empty-state">Fill out the form to generate a valuation report.</div>
         <?php endif; ?>
       </div>
     </div>
-  </div>
-</div>
 
 <script>
 const CATALOG = <?php echo json_encode($catalog, JSON_UNESCAPED_UNICODE); ?>;
