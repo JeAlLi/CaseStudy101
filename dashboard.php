@@ -183,10 +183,6 @@ include 'header.php';
     <h1 class="hero-title">Find the right price.<br>Sell <span>smart</span>. Buy <span>better</span>.</h1>
     <p class="hero-desc">A multiple linear regression model trained on thousands of used-car listings from Philippine online marketplaces, estimating fair market value from a vehicle's specs and condition.</p>
     
-    <div class="formula-box">
-      <div class="formula-tag">MODEL</div>
-      ŷ = β₀ + β₁·Year + β₂·Mileage + β₃·Engine + β₄·Brand + β₅·Transmission + ε
-    </div>
 
     <div class="hero-metrics">
       <div class="hm-item">
