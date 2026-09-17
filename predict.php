@@ -23,10 +23,11 @@ while($row = $mkt_stmt->fetch(PDO::FETCH_ASSOC)) {
     if (!isset($catalog[$type][$brand][$model])) {
         $catalog[$type][$brand][$model] = [
             'year_start' => (int)$row['min_y'],
-            'year_end' => max((int)$row['max_y'], $current_year)
+            'year_end' => (int)$row['max_y']
         ];
     } else {
         $catalog[$type][$brand][$model]['year_start'] = min($catalog[$type][$brand][$model]['year_start'], (int)$row['min_y']);
+        $catalog[$type][$brand][$model]['year_end'] = max($catalog[$type][$brand][$model]['year_end'], (int)$row['max_y']);
     }
 }
 
