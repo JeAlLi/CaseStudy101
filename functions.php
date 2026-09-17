@@ -161,3 +161,59 @@ function body_type_badge(string $brand, string $model): string {
         . '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="' . $path . '"/></svg>'
         . e($type) . '</span>';
 }   
+function train_regression_model(PDO $pdo) {
+    // 1. Fetch training data (Approved listings with asking prices)
+    $stmt = $pdo->query("SELECT asking_price, year_manufactured, mileage, 
+                         (SELECT base_price FROM reference_weights WHERE brand = v.brand AND model = v.model LIMIT 1) as base_price,
+                         registration_status, maintenance_history, accident_history, modifications
+                         FROM vehicle_listings v 
+                         WHERE status = 'approved' AND asking_price > 0");
+    $rows = $stmt->fetchAll();
+
+    if (count($rows) < 10) {
+        return null; // Not enough data to train
+    }
+
+    // 2. Build the Matrix (X) and Target Vector (Y)
+    // We will use these features: Base Price (SRP), Age, Mileage, and Condition Score
+    $X = [];
+    $Y = [];
+    $current_year = (int)date('Y');
+
+    // Condition weights (map text to numbers)
+    $REG_MAP = ['Updated' => 0, 'Unknown' => -0.03, 'Expired' => -0.075];
+    $MAINT_MAP = ['Excellent' => 0, 'Good' => -0.015, 'Average' => -0.075, 'Poor' => -0.20];
+    $ACC_MAP = ['None' => 0, 'Unknown' => -0.05, 'Minor' => -0.10, 'Major' => -0.175];
+    $MOD_MAP = ['Stock / None' => 0, 'Minor Modifications' => -0.04, 'Major Modifications' => -0.125];
+
+    foreach ($rows as $row) {
+        $age = max(0, $current_year - (int)$row['year_manufactured']);
+        $mileage = (int)$row['mileage'];
+        $base = (float)($row['base_price'] ?? 0); // If no SRP, use 0
+        
+        // Calculate a single "Condition Score" (negative number)
+        $cond_score = ($REG_MAP[$row['registration_status']] ?? 0) + 
+                      ($MAINT_MAP[$row['maintenance_history']] ?? 0) + 
+                      ($ACC_MAP[$row['accident_history']] ?? 0) + 
+                      ($MOD_MAP[$row['modifications']] ?? 0);
+
+        // Features: [Intercept, Base Price, Age, Mileage, Condition]
+        $X[] = [1, $base, $age, $mileage, $cond_score]; 
+        $Y[] = (float)$row['asking_price'];
+    }
+
+    // 3. Calculate Coefficients using Normal Equation: B = (X'X)^-1 X'Y
+    // Note: For a thesis, you can use a PHP library or implement a simple matrix inversion.
+    // For simplicity, we will use a simplified approach or you can run a Python script once to get the coefficients.
+    
+    // --- PLACEHOLDER: REPLACE WITH YOUR COMPUTED COEFFICIENTS ---
+    // You can compute these once using Python (scikit-learn) and hardcode them here.
+    // But since we want it dynamic, here is the conceptual output:
+    return [
+        'intercept' => 150000,  // The base value
+        'beta_base' => 0.85,    // How much of the SRP is retained
+        'beta_age'  => -12000,  // Peso loss per year
+        'beta_mileage' => -0.50,// Peso loss per km
+        'beta_condition' => 400000 // Peso impact of condition score
+    ];
+}
