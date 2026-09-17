@@ -71,72 +71,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['predict'])) {
     if (empty($errors)) {
         $year = (int)$year_raw;
         $mileage = (int)$mileage_raw;
-
-        // Fetch Reference SRP
-        $stmt = $pdo->prepare("SELECT * FROM reference_weights WHERE vehicle_type = ? AND LOWER(brand) = LOWER(?) AND LOWER(model) = LOWER(?) LIMIT 1");
-        $stmt->execute([$type, $brand, $model]);
-        $vehicle_data = $stmt->fetch();
-
-        // Fetch Live Market Data
-        $marketStmt = $pdo->prepare("SELECT AVG(asking_price) as avg_market_price, COUNT(*) as listing_count FROM vehicle_listings WHERE LOWER(brand) = LOWER(?) AND LOWER(model) = LOWER(?) AND status = 'approved' AND asking_price > 0");
-        $marketStmt->execute([$brand, $model]);
-        $marketData = $marketStmt->fetch();
-        $listing_count = (int)$marketData['listing_count'];
-
-        if ($vehicle_data || $listing_count > 0) {
+        
+        // 1. Prepare data for the Machine Learning Model
+        $ml_input = [
+            'brand' => $brand,
+            'model' => $model,
+            'year_manufactured' => $year,
+            'mileage' => $mileage,
+            'transmission' => $transmission,
+            'fuel_type' => $fuel_type
+        ];
+        
+        // 2. Encode to Base64 to safely bypass Windows command line quote stripping
+        $b64_input = base64_encode(json_encode($ml_input));
+        
+        // 3. Execute the Python microservice
+        $command = "python ml_predict.py " . escapeshellarg($b64_input);
+        $output = shell_exec($command);
+        $result = json_decode($output, true);
+        
+        if ($result && $result['status'] === 'success') {
+            $ml_base_price = (float)$result['predicted_price'];
+            
+            // 4. Apply Physical Condition Modifiers
+            // (Because scrapped data rarely has normalized condition/maintenance info, 
+            // we apply your condition heuristics AFTER the regression engine establishes the baseline)
             $cond_pct = $REGISTRATION_PCT[$registration] + $MAINTENANCE_PCT[$maintenance] + $ACCIDENT_PCT[$accidents] + $MODIFICATION_PCT[$modifications];
+            $cond_adj = $ml_base_price * $cond_pct;
             
-            $math_price = null;
-            $has_ref = false;
-
-            // Phase 1: Mathematical Baseline (If Reference Data Exists)
-            if ($vehicle_data) {
-                $has_ref = true;
-                $age = max(0, $current_year - $year);
-                $base = (float)$vehicle_data['base_price'];
-                
-                $year_adj = $base * min(0.80, $age * 0.09);
-                $mileage_adj = $base * min(0.20, ($mileage / 10000) * 0.015);
-                $cond_adj = $base * $cond_pct;
-                
-                $math_price = max(1000, $base - $year_adj - $mileage_adj + $cond_adj);
-            }
-
-            // Phase 2: Dynamic Fallback Valuation
-            if ($has_ref && $listing_count > 0) {
-                // Scenario A: HYBRID (Math + Market)
-                $avg_market = (float)$marketData['avg_market_price'];
-                $adj_market = $avg_market + ($avg_market * $cond_pct);
-                $final_price = ($math_price + $adj_market) / 2;
-                
-                $breakdown = [
-                    'has_ref' => true, 'base' => $base, 'year_adj' => $year_adj, 'mileage_adj' => $mileage_adj, 
-                    'cond_adj' => $cond_adj, 'market_used' => true, 'listing_count' => $listing_count
-                ];
-            } elseif ($has_ref) {
-                // Scenario B: PURE MATH (No live market data available)
-                $final_price = $math_price;
-                $breakdown = [
-                    'has_ref' => true, 'base' => $base, 'year_adj' => $year_adj, 'mileage_adj' => $mileage_adj, 
-                    'cond_adj' => $cond_adj, 'market_used' => false, 'listing_count' => 0
-                ];
-            } else {
-                // Scenario C: PURE MARKET (No SRP available, highly reliant on scraped data)
-                $avg_market = (float)$marketData['avg_market_price'];
-                $cond_adj = $avg_market * $cond_pct;
-                $final_price = $avg_market + $cond_adj;
-                
-                $breakdown = [
-                    'has_ref' => false, 'base' => $avg_market, 'cond_adj' => $cond_adj, 
-                    'market_used' => true, 'listing_count' => $listing_count
-                ];
-            }
-            
+            $final_price = $ml_base_price + $cond_adj;
             $estimated_price = max(1000, $final_price);
-            $range_low  = $estimated_price * 0.947;
-            $range_high = $estimated_price * 1.053;
+            
+            $range_low  = $estimated_price * 0.92;
+            $range_high = $estimated_price * 1.08;
+            
+            // Set breakdown variables for the UI
+            $breakdown = [
+                'has_ref' => false,
+                'base' => $ml_base_price,
+                'cond_adj' => $cond_adj,
+                'market_used' => true,
+                'listing_count' => "All Active"
+            ];
+            
         } else {
-            $errors['model'] = "No market data or reference data exists for this specific model yet.";
+            $error_msg = $result['message'] ?? 'Unknown execution error.';
+            $errors['model'] = "Machine Learning Engine failed: " . htmlspecialchars($error_msg);
         }
     }
 }
