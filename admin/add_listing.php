@@ -43,8 +43,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_listing'])) {
     if ($model === '') { $errors['model'] = 'Required'; }
     if ($year_raw === '') { $errors['year'] = 'Required'; }
     
-    if ($mileage_raw === '' || !ctype_digit($mileage_raw) || (int)$mileage_raw < 0 || (int)$mileage_raw > 999999) { 
-        $errors['mileage'] = 'Invalid (0 - 999,999)'; 
+    if ($mileage_raw === '' || !ctype_digit($mileage_raw) || (int)$mileage_raw < 0 || (int)$mileage_raw > 5230930) { 
+        $errors['mileage'] = 'Invalid (0 - 5,230,930)'; 
     }
     
     if ($asking_price_raw === '' || !is_numeric($asking_price_raw) || (float)$asking_price_raw < 20000 || (float)$asking_price_raw > 50000000) { 
@@ -115,7 +115,9 @@ include 'header.php';
           <div class="field-error"><?php echo htmlspecialchars($errors['year'] ?? ''); ?></div>
         </div>
         <div class="field"><label>Mileage (km)</label>
-          <input type="number" name="mileage" min="0" max="999999" oninput="this.value = this.value.slice(0, 6)" value="<?php echo htmlspecialchars($f['mileage'] ?? ''); ?>">
+          <input type="number" name="mileage" min="0" max="5230930"
+       oninput="if(this.value.length > 7) this.value = this.value.slice(0,7)"
+       value="...">
           <div class="field-error"><?php echo htmlspecialchars($errors['mileage'] ?? ''); ?></div>
         </div>
         <div class="field"><label>Listed Price (₱)</label>
@@ -178,14 +180,17 @@ function resetSelect(select, placeholder) {
   select.appendChild(opt); select.disabled = true;
 }
 
-function fillSelect(select, values, placeholder) {
-  select.innerHTML = '';
-  const opt = document.createElement('option'); opt.value = ''; opt.textContent = placeholder;
-  select.appendChild(opt); select.disabled = false;
+function fillSelect(select, values, selected, placeholder) {
+  resetSelect(select, placeholder, false);
   values.forEach(v => {
-    const o = document.createElement('option'); o.value = v; o.textContent = v;
-    select.appendChild(o);
+    const opt = document.createElement('option'); opt.value = v; opt.textContent = v;
+    if (String(v) === String(selected)) opt.selected = true;
+    select.appendChild(opt);
   });
+  // FIX: disable the placeholder so it can't be re-selected after a real value is chosen
+  if (select.options[0]) {
+    select.options[0].disabled = true;
+  }
 }
 
 fillSelect(brandSelect, Object.keys(CATALOG['Car'] || {}), 'Select brand');

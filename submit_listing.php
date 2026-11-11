@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once 'db.php';
+require_once 'risk_engine.php';
 $current_page = 'submit_listing';
 
 $success_message = '';
@@ -8,19 +9,13 @@ $error_message = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
-        // Collect Section 1: Vehicle Selection
         $brand = $_POST['brand'] ?? 'Toyota';
         $model = $_POST['model'] ?? '';
         $year_manufactured = $_POST['year_manufactured'] ?? '';
-
-        // Collect Section 2: Vehicle Specifications
         $mileage = $_POST['mileage'] ?? 0;
         $transmission = $_POST['transmission'] ?? '';
         $fuel_type = $_POST['fuel_type'] ?? '';
-        $color = $_POST['color'] ?? '';
         $plate_ending = $_POST['plate_ending'] ?? '';
-
-        // Collect Section 3: Modifications & Upgrades
         $is_stock = $_POST['is_stock'] ?? 'Yes';
         $modifications = 'Stock / None';
         if ($is_stock === 'No') {
@@ -39,8 +34,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $accident_history = ($_POST['major_accident'] ?? 'No') === 'Yes' ? ($_POST['accident_details'] ?? 'Yes') : 'None';
         $flooded = $_POST['flooded'] ?? 'No';
         $general_condition = $_POST['general_condition'] ?? 'Good';
-
-        // Collect Section 5: Legal Documents
         $lto_status = $_POST['lto_status'] ?? 'Updated';
         $or_cr = $_POST['or_cr'] ?? 'Yes';
         $fully_paid = $_POST['fully_paid'] ?? 'Yes';
@@ -117,6 +110,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $maintenance_history = $casa_maintained === 'Yes' ? 'Excellent (Casa)' : $general_condition;
 
+        $risk = compute_risk_score($pdo, [
+            'brand' => $brand, 'model' => $model,
+            'year_manufactured' => (int)$year_manufactured,
+            'mileage' => (int)$mileage,
+            'asking_price' => (float)$asking_price,
+            'location' => $full_location,
+            'city' => $city,
+            'district' => $district,
+            'barangay' => $barangay,
+            'accident_history' => $accident_history,
+            'is_flood_flagged' => ($flooded === 'Yes'),
+            'seller_contact' => $seller_contact,
+        ]);
+
+        if ($risk['risk_level'] === 'High') {
+            throw new Exception('Listing rejected by risk engine: ' . implode('; ', $risk['flags']));
+        }
+
+        $stmt = $pdo->prepare("
+            INSERT INTO vehicle_listings (
+                vehicle_type, brand, model, year_manufactured, mileage, color,
+                transmission, fuel_type, modifications, registration_status,
+                maintenance_history, accident_history, asking_price, price_negotiability,
+                location, city, district, barangay, reason_for_selling, status, listing_type, seller_contact,
+                risk_score, risk_level, risk_flags, risk_recommendation, risk_evaluated_at
+            ) VALUES (
+                'Car', ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, 'pending', 'user_sale', ?,
+                ?, ?, ?, ?, ?
+            )
+        ");
         $stmt->execute([
             $brand, $model, $year_manufactured, $mileage, $color,
             $transmission, $fuel_type, $modifications, $lto_status, $or_cr, $fully_paid, $deed_of_sale,
@@ -130,14 +156,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
 
         $success_message = "Your listing has been submitted successfully and is pending review.";
-    } catch (PDOException $e) {
-        $error_message = "Error submitting listing: " . $e->getMessage();
+    } catch (Exception $e) {
+        $error_message = $e->getMessage();
     }
 }
 
 include 'header.php';
 ?>
-
 <style>
     .form-container {
         background: #ffffff;
@@ -289,29 +314,21 @@ include 'header.php';
 
 <div class="view">
     <div class="form-container">
-        <h2 style="font-size: 24px; font-weight: 800; margin-bottom: 8px;">Second-Hand Car Listing</h2>
-        <p style="color: #6b7280; margin-bottom: 32px;">Complete the sections below to generate a detailed verified listing for your vehicle.</p>
+        <h2 style="font-size:24px; font-weight:800; margin-bottom:8px;">Second-Hand Car Listing</h2>
+        <p style="color:#6b7280; margin-bottom:32px;">Complete the sections below to generate a detailed verified listing for your vehicle.</p>
 
-        <?php if ($success_message): ?>
-            <div class="alert alert-success"><?php echo $success_message; ?></div>
-        <?php endif; ?>
-        <?php if ($error_message): ?>
-            <div class="alert alert-danger"><?php echo $error_message; ?></div>
-        <?php endif; ?>
+        <?php if ($success_message): ?><div class="alert alert-success"><?php echo $success_message; ?></div><?php endif; ?>
+        <?php if ($error_message): ?><div class="alert alert-danger"><?php echo htmlspecialchars($error_message); ?></div><?php endif; ?>
 
         <!-- Added enctype="multipart/form-data" required for file uploads -->
         <form method="POST" action="" enctype="multipart/form-data">
-            
-            <!-- 1. Select Your Vehicle -->
             <div class="form-section">
                 <div class="section-title"><span>1</span> Select Your Vehicle</div>
                 <div class="grid-2">
-                    <div class="form-group">
-                        <label>Car Brand</label>
-                        <input type="text" name="brand" class="form-control" value="Toyota" readonly style="background-color: #e5e7eb; color: #6b7280; cursor: not-allowed;" required>
+                    <div class="form-group"><label>Car Brand</label>
+                        <input type="text" name="brand" class="form-control" value="Toyota" readonly style="background-color:#e5e7eb;color:#6b7280;cursor:not-allowed;" required>
                     </div>
-                    <div class="form-group">
-                        <label>Car Model</label>
+                    <div class="form-group"><label>Car Model</label>
                         <select name="model" id="model-select" class="form-control" required>
                             <option value="">Select model</option>
                             <option value="Vios">Vios</option>
@@ -322,11 +339,10 @@ include 'header.php';
                             <option value="Avanza">Avanza</option>
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label>Year Model</label>
-                        <select name="year_manufactured" class="form-control" required>
+                    <div class="form-group"><label>Year Model</label>
+                        <select name="year_manufactured" id="year-select" class="form-control" required>
                             <option value="">Select year</option>
-                            <?php for($i = 2026; $i >= 2015; $i--): ?>
+                            <?php for ($i = 2026; $i >= 2013; $i--): ?>
                                 <option value="<?php echo $i; ?>"><?php echo $i; ?></option>
                             <?php endfor; ?>
                         </select>
@@ -334,7 +350,6 @@ include 'header.php';
                 </div>
             </div>
 
-            <!-- 2. Vehicle Specifications -->
             <div class="form-section">
                 <div class="section-title"><span>2</span> Vehicle Specifications</div>
                 <div class="grid-2">
@@ -345,28 +360,28 @@ include 'header.php';
                     <div class="form-group">
                         <label>Exterior Color</label>
                         <select name="color" id="color-select" class="form-control" required disabled>
-                            <option value="">Select a model first</option>
+                            <option value="">Select model &amp; year first</option>
                         </select>
+                        <input type="text" name="color_custom" id="color-custom" class="form-control"
+                               placeholder="Type custom color (e.g., Red Blue)"
+                               style="display:none; margin-top:8px;" maxlength="60">
                     </div>
-                    <div class="form-group">
-                        <label>Transmission</label>
+                    <div class="form-group"><label>Transmission</label>
                         <div class="radio-group">
                             <label class="radio-label"><input type="radio" name="transmission" value="Automatic" required> Automatic</label>
                             <label class="radio-label"><input type="radio" name="transmission" value="Manual"> Manual</label>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>Fuel Type</label>
+                    <div class="form-group"><label>Fuel Type</label>
                         <div class="radio-group" id="fuel-radios">
                             <label class="radio-label" id="fuel-gas"><input type="radio" name="fuel_type" id="radio-gas" value="Gasoline" required> Gas</label>
                             <label class="radio-label" id="fuel-diesel"><input type="radio" name="fuel_type" id="radio-diesel" value="Diesel"> Diesel</label>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>Plate Number Ending (Coding check)</label>
+                    <div class="form-group"><label>Plate Number Ending (Coding check)</label>
                         <select name="plate_ending" class="form-control">
                             <option value="">Select last digit</option>
-                            <?php for($i = 0; $i <= 9; $i++): ?>
+                            <?php for ($i = 0; $i <= 9; $i++): ?>
                                 <option value="<?php echo $i; ?>"><?php echo $i; ?></option>
                             <?php endfor; ?>
                         </select>
@@ -374,22 +389,21 @@ include 'header.php';
                 </div>
             </div>
 
-            <!-- 3. Modifications & Upgrades -->
             <div class="form-section">
-                <div class="section-title"><span>3</span> Modifications & Upgrades</div>
+                <div class="section-title"><span>3</span> Modifications &amp; Upgrades</div>
                 <div class="form-group">
                     <label>Is the vehicle completely stock (no modifications)?</label>
-                    <div class="radio-group" style="margin-bottom: 16px;">
+                    <div class="radio-group" style="margin-bottom:16px;">
                         <label class="radio-label"><input type="radio" name="is_stock" value="Yes" checked onclick="document.getElementById('mods-list').style.display='none'"> Yes</label>
                         <label class="radio-label"><input type="radio" name="is_stock" value="No" onclick="document.getElementById('mods-list').style.display='flex'"> No</label>
                     </div>
-                    <div id="mods-list" class="checkbox-group" style="display: none; flex-direction: column;">
+                    <div id="mods-list" class="checkbox-group" style="display:none;flex-direction:column;">
                         <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Upgraded Touchscreen"> Upgraded Touchscreen / Apple CarPlay / Android Auto</label>
                         <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Leather Seats"> Leather Seats</label>
                         <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Dashcam"> Dashcam / Upgraded Reverse Camera</label>
                         <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Aftermarket Wheels"> Aftermarket Wheels / Mags</label>
                         <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Modified Exhaust"> Modified Exhaust System</label>
-                        <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Modified Suspension"> Modified Suspension (Lifted or Lowered)</label>
+                        <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Modified Suspension"> Modified Suspension</label>
                         <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Engine Tune"> Engine Tune / ECU Remap</label>
                         <div style="margin-top: 12px; width: 100%; max-width: 400px;">
                             <label style="font-size: 13px; font-weight: 600; color: #374151;">Specify Other Modifications:</label>
@@ -399,41 +413,35 @@ include 'header.php';
                 </div>
             </div>
 
-            <!-- 4. Condition & History -->
             <div class="form-section">
-                <div class="section-title"><span>4</span> Condition & History</div>
+                <div class="section-title"><span>4</span> Condition &amp; History</div>
                 <div class="grid-2">
-                    <div class="form-group">
-                        <label>First Owner Vehicle?</label>
+                    <div class="form-group"><label>First Owner Vehicle?</label>
                         <div class="radio-group">
                             <label class="radio-label"><input type="radio" name="first_owner" value="Yes"> Yes</label>
                             <label class="radio-label"><input type="radio" name="first_owner" value="No" checked> No</label>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>Casa-Maintained with Complete Service Records?</label>
+                    <div class="form-group"><label>Casa-Maintained with Records?</label>
                         <div class="radio-group">
                             <label class="radio-label"><input type="radio" name="casa_maintained" value="Yes"> Yes</label>
                             <label class="radio-label"><input type="radio" name="casa_maintained" value="No" checked> No</label>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>Involved in Major Accident(s)?</label>
-                        <div class="radio-group" style="margin-bottom: 8px;">
+                    <div class="form-group"><label>Involved in Major Accident(s)?</label>
+                        <div class="radio-group" style="margin-bottom:8px;">
                             <label class="radio-label"><input type="radio" name="major_accident" value="Yes" onclick="document.getElementById('accident-details').style.display='block'"> Yes</label>
                             <label class="radio-label"><input type="radio" name="major_accident" value="No" checked onclick="document.getElementById('accident-details').style.display='none'"> No</label>
                         </div>
-                        <input type="text" name="accident_details" id="accident-details" class="form-control" placeholder="If Yes, provide details" style="display: none;">
+                        <input type="text" name="accident_details" id="accident-details" class="form-control" placeholder="If Yes, provide details" style="display:none;">
                     </div>
-                    <div class="form-group">
-                        <label>Flooded Vehicle History?</label>
+                    <div class="form-group"><label>Flooded Vehicle History?</label>
                         <div class="radio-group">
                             <label class="radio-label"><input type="radio" name="flooded" value="Yes"> Yes</label>
                             <label class="radio-label"><input type="radio" name="flooded" value="No" checked> No</label>
                         </div>
                     </div>
-                    <div class="form-group" style="grid-column: span 2;">
-                        <label>Overall General Condition</label>
+                    <div class="form-group" style="grid-column:span 2;"><label>Overall General Condition</label>
                         <div class="radio-group">
                             <label class="radio-label"><input type="radio" name="general_condition" value="Excellent" required> Excellent</label>
                             <label class="radio-label"><input type="radio" name="general_condition" value="Good"> Good</label>
@@ -444,33 +452,28 @@ include 'header.php';
                 </div>
             </div>
 
-            <!-- 5. Legal Documents & Registration -->
             <div class="form-section">
-                <div class="section-title"><span>5</span> Legal Documents & Registration</div>
+                <div class="section-title"><span>5</span> Legal Documents &amp; Registration</div>
                 <div class="grid-2">
-                    <div class="form-group">
-                        <label>LTO Registration Status</label>
+                    <div class="form-group"><label>LTO Registration Status</label>
                         <select name="lto_status" class="form-control">
                             <option value="Currently Registered">Currently Registered</option>
                             <option value="Expired">Expired</option>
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label>Original OR / CR On Hand?</label>
+                    <div class="form-group"><label>Original OR / CR On Hand?</label>
                         <div class="radio-group">
                             <label class="radio-label"><input type="radio" name="or_cr" value="Yes" checked> Yes</label>
                             <label class="radio-label"><input type="radio" name="or_cr" value="No"> No</label>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>Fully Paid (No Bank Encumbrance)?</label>
+                    <div class="form-group"><label>Fully Paid?</label>
                         <div class="radio-group">
                             <label class="radio-label"><input type="radio" name="fully_paid" value="Yes" checked> Yes</label>
                             <label class="radio-label"><input type="radio" name="fully_paid" value="No"> No</label>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>Deed of Sale Ready?</label>
+                    <div class="form-group"><label>Deed of Sale Ready?</label>
                         <div class="radio-group">
                             <label class="radio-label"><input type="radio" name="deed_of_sale" value="Yes" checked> Yes</label>
                             <label class="radio-label"><input type="radio" name="deed_of_sale" value="No"> No</label>
@@ -479,32 +482,27 @@ include 'header.php';
                 </div>
             </div>
 
-            <!-- 6. Pricing & Payment -->
             <div class="form-section">
-                <div class="section-title"><span>6</span> Pricing & Payment</div>
+                <div class="section-title"><span>6</span> Pricing &amp; Payment</div>
                 <div class="grid-2">
-                    <div class="form-group">
-                        <label>Asking Price (PHP)</label>
+                    <div class="form-group"><label>Asking Price (PHP)</label>
                         <input type="text" id="display_price" class="form-control" placeholder="₱ 0" required>
                         <input type="hidden" name="asking_price" id="actual_price">
                     </div>
-                    <div class="form-group">
-                        <label>Price Negotiable?</label>
+                    <div class="form-group"><label>Price Negotiable?</label>
                         <div class="radio-group">
                             <label class="radio-label"><input type="radio" name="negotiable" value="Yes"> Yes</label>
                             <label class="radio-label"><input type="radio" name="negotiable" value="No" checked> No</label>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>Accepted Payment Methods</label>
+                    <div class="form-group"><label>Accepted Payment Methods</label>
                         <div class="checkbox-group">
                             <label class="checkbox-label"><input type="checkbox" name="payment_methods[]" value="Cash" checked> Cash</label>
                             <label class="checkbox-label"><input type="checkbox" name="payment_methods[]" value="Bank Financing"> Bank Financing</label>
                             <label class="checkbox-label"><input type="checkbox" name="payment_methods[]" value="Assume Balance"> Assume Balance</label>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>Open to Trade-Ins?</label>
+                    <div class="form-group"><label>Open to Trade-Ins?</label>
                         <div class="radio-group">
                             <label class="radio-label"><input type="radio" name="trade_in" value="Yes"> Yes</label>
                             <label class="radio-label"><input type="radio" name="trade_in" value="No" checked> No</label>
@@ -611,16 +609,14 @@ include 'header.php';
                     <label>Reason for Selling (RFS)</label>
                     <input type="text" name="rfs" class="form-control" placeholder="Enter reason for selling">
                 </div>
-                <div class="form-group">
-                    <label>Warranty Status</label>
+                <div class="form-group"><label>Warranty Status</label>
                     <div class="radio-group">
-                        <label class="radio-label"><input type="radio" name="warranty_status" value="Active"> Active Manufacturer / Dealer Warranty</label>
+                        <label class="radio-label"><input type="radio" name="warranty_status" value="Active"> Active Warranty</label>
                         <label class="radio-label"><input type="radio" name="warranty_status" value="No Warranty" checked> No Warranty</label>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>Seller's Notes & Detailed Description</label>
-                    <textarea name="seller_notes" class="form-control" rows="4" placeholder="Any additional information..."></textarea>
+                <div class="form-group"><label>Seller's Notes</label>
+                    <textarea name="seller_notes" class="form-control" rows="4" placeholder="Additional info..."></textarea>
                 </div>
             </div>
 
@@ -629,6 +625,8 @@ include 'header.php';
     </div>
 </div>
 
+<script src="car_colors.php"></script>
+<script src="ph_locations.php"></script>
 <script>
 // --- Image Preview for Camera Captures ---
 function previewImage(input, previewId) {
@@ -644,101 +642,202 @@ function previewImage(input, previewId) {
 }
 
 document.addEventListener("DOMContentLoaded", function() {
-    
-    // --- 1. Dynamic Model Data (Toyota PH Spec Colors & Fuel) ---
-    const modelData = {
-        "Vios": {
-            colors: ["Super White", "White Pearl", "Silver Metallic", "Gray Metallic", "Attitude Black", "Red Mica Metallic", "Alumina Jade Metallic", "Blackish Red Mica"],
-            fuel: ["Gasoline"]
-        },
-        "Innova": {
-            colors: ["Super White", "White Pearl Crystal Shine", "Silver Metallic", "Blackish Red Mica", "Alumina Jade Metallic", "Attitude Black", "Bronze Mica Metallic"],
-            fuel: ["Diesel", "Gasoline"]
-        },
-        "Fortuner": {
-            colors: ["Super White", "White Pearl", "Silver Metallic", "Attitude Black Mica", "Gray Metallic", "Phantom Brown Metallic", "Nebula Blue Metallic", "Sparkling Black Pearl"],
-            fuel: ["Diesel", "Gasoline"]
-        },
-        "Hilux": {
-            colors: ["Super White", "Silver Metallic", "Gray Metallic", "Attitude Black Mica", "Crimson Spark Red Metallic", "Nebula Blue", "Orange Metallic", "Emotional Red"],
-            fuel: ["Diesel", "Gasoline"]
-        },
-        "Wigo": {
-            colors: ["Orange Metallic", "Silver Metallic", "Gray Metallic", "White", "Black", "Yellow", "Red Mica Metallic"],
-            fuel: ["Gasoline"]
-        },
-        "Avanza": {
-            colors: ["Silver Mica Metallic", "Gray Metallic", "Black Metallic", "Dark Red Mica", "White", "Nebula Blue", "Green Mica"],
-            fuel: ["Gasoline"]
-        }
-    };
-
+    // ---------- COLOR CATALOG ----------
     const modelSelect = document.getElementById("model-select");
+    const yearSelect  = document.getElementById("year-select");
     const colorSelect = document.getElementById("color-select");
-    const fuelGasLabel = document.getElementById("fuel-gas");
+    const colorCustom = document.getElementById("color-custom");
+    const fuelGasLabel    = document.getElementById("fuel-gas");
     const fuelDieselLabel = document.getElementById("fuel-diesel");
-    const radioGas = document.getElementById("radio-gas");
+    const radioGas    = document.getElementById("radio-gas");
     const radioDiesel = document.getElementById("radio-diesel");
 
-    modelSelect.addEventListener("change", function() {
-        const selectedModel = this.value;
-        
+    if (modelSelect.options[0]) modelSelect.options[0].disabled = true;
+    if (yearSelect.options[0])  yearSelect.options[0].disabled  = true;
+
+    const fuelData = {
+        "Vios":     ["Gasoline"],
+        "Innova":   ["Diesel","Gasoline"],
+        "Fortuner": ["Diesel","Gasoline"],
+        "Hilux":    ["Diesel","Gasoline"],
+        "Wigo":     ["Gasoline"],
+        "Avanza":   ["Gasoline"]
+    };
+
+    function populateColors() {
+        const model = modelSelect.value;
+        const year  = yearSelect.value;
+        colorCustom.style.display = 'none';
+        colorCustom.required = false;
+        colorCustom.value = '';
         colorSelect.innerHTML = '<option value="">Select a color</option>';
-        
-        if (modelData[selectedModel]) {
-            colorSelect.disabled = false;
-            
-            modelData[selectedModel].colors.forEach(function(color) {
-                const option = document.createElement("option");
-                option.value = color;
-                option.textContent = color;
-                colorSelect.appendChild(option);
-            });
-            
-            const otherOption = document.createElement("option");
-            otherOption.value = "Other / Custom";
-            otherOption.textContent = "Other / Custom Paint";
-            colorSelect.appendChild(otherOption);
+        colorSelect.disabled = true;
+        if (!model || !year) return;
+        const colors = (window.getCarColors ? window.getCarColors('Toyota', model, year) : []) || [];
+        if (colors.length === 0) return;
+        colorSelect.disabled = false;
+        colors.forEach(function(c) {
+            const o = document.createElement("option");
+            o.value = c; o.textContent = c;
+            colorSelect.appendChild(o);
+        });
+        const other = document.createElement("option");
+        other.value = "Other / Custom"; other.textContent = "Other / Custom";
+        colorSelect.appendChild(other);
+        colorSelect.options[0].disabled = true;
+    }
 
-            const availableFuels = modelData[selectedModel].fuel;
-            
-            if (availableFuels.includes("Gasoline")) {
-                fuelGasLabel.style.display = "inline-flex";
-            } else {
-                fuelGasLabel.style.display = "none";
-                radioGas.checked = false;
+    modelSelect.addEventListener("change", function() {
+        this.options[0].disabled = true;
+        const selectedModel = this.value;
+        if (fuelData[selectedModel]) {
+            const fuels = fuelData[selectedModel];
+            fuelGasLabel.style.display    = fuels.includes("Gasoline") ? "inline-flex" : "none";
+            fuelDieselLabel.style.display = fuels.includes("Diesel")   ? "inline-flex" : "none";
+            if (!fuels.includes("Gasoline")) radioGas.checked = false;
+            if (!fuels.includes("Diesel"))   radioDiesel.checked = false;
+            if (fuels.length === 1) {
+                if (fuels[0] === "Gasoline") radioGas.checked = true;
+                if (fuels[0] === "Diesel")   radioDiesel.checked = true;
             }
-            
-            if (availableFuels.includes("Diesel")) {
-                fuelDieselLabel.style.display = "inline-flex";
-            } else {
-                fuelDieselLabel.style.display = "none";
-                radioDiesel.checked = false;
-            }
-
-            if (availableFuels.length === 1) {
-                if (availableFuels[0] === "Gasoline") radioGas.checked = true;
-                if (availableFuels[0] === "Diesel") radioDiesel.checked = true;
-            }
-
         } else {
-            colorSelect.disabled = true;
-            colorSelect.innerHTML = '<option value="">Select a model first</option>';
             fuelGasLabel.style.display = "inline-flex";
             fuelDieselLabel.style.display = "inline-flex";
         }
+        populateColors();
     });
 
-    // --- 2. Money Formatter for Asking Price ---
-    const displayPrice = document.getElementById('display_price');
-    const actualPrice = document.getElementById('actual_price');
+    yearSelect.addEventListener("change", function() {
+        this.options[0].disabled = true;
+        populateColors();
+    });
 
-    displayPrice.addEventListener('input', function(e) {
-        let value = this.value.replace(/\D/g, ""); 
-        
+    colorSelect.addEventListener('change', function() {
+        if (this.value === 'Other / Custom') {
+            colorCustom.style.display = 'block';
+            colorCustom.required = true;
+            colorCustom.focus();
+        } else {
+            colorCustom.style.display = 'none';
+            colorCustom.required = false;
+            colorCustom.value = '';
+        }
+    });
+    colorCustom.addEventListener('blur', function() {
+        if (this.value.trim() !== '') {
+            this.value = this.value.trim().replace(/\s+/g, ' ').toLowerCase()
+                .replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // 3-LEVEL LOCATION — now all native <select> dropdowns
+    // ═══════════════════════════════════════════════════════════════
+    const citySelect     = document.getElementById('city-select');
+    const districtSelect = document.getElementById('district-select');
+    const districtWrap   = document.getElementById('district-wrapper');
+    const barangaySelect = document.getElementById('barangay-select');
+
+    // ---- 1. Populate city dropdown (grouped by region) ----
+    const regionGroups = {
+        "Metro Manila (NCR)": ['Caloocan','Las Piñas','Makati','Malabon','Mandaluyong','Manila','Marikina','Muntinlupa','Navotas','Parañaque','Pasay','Pateros','Quezon City','San Juan','Taguig','Valenzuela'],
+        "Cavite": ['Bacoor','Imus','Noveleta','Kawit','Dasmariñas','Tagaytay','Trece Martires','Cavite City','General Trias'],
+        "Laguna": ['Calamba','San Pedro','Santa Rosa','Biñan','Los Baños','Cabuyao','Santa Cruz','Bay','Victoria','Pakil','Pila','Lumban','Cavinti'],
+        "Rizal": ['Antipolo','Cainta','Taytay','Angono','Binangonan','Cardona','Morong','Baras','Tanay','Pililla','Jala-Jala','San Mateo'],
+        "Bulacan": ['Malolos','Meycauayan','Marilao','Bocaue','Hagonoy','Calumpit','Paombong','San Jose del Monte','San Miguel','Pulilan','Balagtas','Guiguinto','Pandi'],
+        "Pampanga": ['San Fernando (Pampanga)','Angeles','Mabalacat','Lubao','Sasmuan','Macabebe','Porac','Masantol','Candaba','Guagua','Arayat','Apalit','San Simon','Floridablanca'],
+        "Visayas": ['Cebu City','Mandaue','Lapu-Lapu','Iloilo City','Bacolod','Dumaguete','Tagbilaran'],
+        "Mindanao": ['Davao City','Cagayan de Oro','Zamboanga City','General Santos']
+    };
+
+    Object.keys(regionGroups).forEach(function(region) {
+        const group = document.createElement('optgroup');
+        group.label = region;
+        regionGroups[region].forEach(function(city) {
+            const opt = document.createElement('option');
+            opt.value = city; opt.textContent = city;
+            group.appendChild(opt);
+        });
+        citySelect.appendChild(group);
+    });
+
+    // ---- 2. City change: populate district OR barangay ----
+    citySelect.addEventListener('change', function() {
+        const city = this.value;
+
+        // Reset downstream
+        districtSelect.innerHTML = '';
+        barangaySelect.innerHTML = '<option value="">Select city (and district) first</option>';
+        barangaySelect.disabled = true;
+
+        if (!city) {
+            districtSelect.innerHTML = '<option value="">Select city first</option>';
+            districtSelect.disabled = true;
+            districtWrap.style.display = 'flex';
+            return;
+        }
+
+        const hasDistricts = window.isCityWithDistricts(city);
+
+        if (hasDistricts) {
+            // Show district dropdown
+            districtWrap.style.display = 'flex';
+            districtSelect.disabled = false;
+            districtSelect.innerHTML = '<option value="">Select district</option>';
+            window.getDistricts(city).forEach(function(d) {
+                const opt = document.createElement('option');
+                opt.value = d; opt.textContent = d;
+                districtSelect.appendChild(opt);
+            });
+            districtSelect.options[0].disabled = true;
+        } else {
+            // Hide district wrapper, go straight to barangay
+            districtWrap.style.display = 'none';
+            districtSelect.disabled = true;
+            districtSelect.innerHTML = '<option value="">N/A</option>';
+
+            barangaySelect.disabled = false;
+            barangaySelect.innerHTML = '<option value="">Select barangay</option>';
+            window.getBarangays(city, '').forEach(function(b) {
+                const opt = document.createElement('option');
+                opt.value = b; opt.textContent = b;
+                barangaySelect.appendChild(opt);
+            });
+            barangaySelect.options[0].disabled = true;
+        }
+    });
+
+    // ---- 3. District change: populate barangay dropdown ----
+    districtSelect.addEventListener('change', function() {
+        const city = citySelect.value;
+        const district = this.value;
+
+        barangaySelect.innerHTML = '';
+        barangaySelect.disabled = true;
+
+        if (!city || !district) {
+            barangaySelect.innerHTML = '<option value="">Select district first</option>';
+            return;
+        }
+
+        barangaySelect.disabled = false;
+        barangaySelect.innerHTML = '<option value="">Select barangay</option>';
+        window.getBarangays(city, district).forEach(function(b) {
+            const opt = document.createElement('option');
+            opt.value = b; opt.textContent = b;
+            barangaySelect.appendChild(opt);
+        });
+        barangaySelect.options[0].disabled = true;
+    });
+
+    // ---------- MONEY FORMATTER ----------
+    const displayPrice = document.getElementById('display_price');
+    const actualPrice  = document.getElementById('actual_price');
+    displayPrice.addEventListener('input', function() {
+        let value = this.value.replace(/\D/g, "");
         if (value) {
             let intValue = parseInt(value, 10);
-            actualPrice.value = intValue; 
+            actualPrice.value = intValue;
             this.value = "₱ " + intValue.toLocaleString('en-US');
         } else {
             actualPrice.value = "";
