@@ -1,327 +1,569 @@
 <?php
+session_start();
 require_once 'db.php';
 $current_page = 'submit_listing';
-$catalog = get_catalog($pdo); 
-$current_year = (int)date('Y');
-$success = false;
-$errors = [];
 
-$TRANSMISSIONS = ['Automatic', 'Manual', 'CVT'];
-$FUEL_TYPES    = ['Gasoline', 'Diesel', 'Hybrid', 'Electric'];
-$MODIFICATIONS = ['Stock / None', 'Minor Modifications', 'Major Modifications'];
-$REGISTRATIONS = ['Updated', 'Expired', 'Unknown'];
-$MAINTENANCE   = ['Excellent', 'Good', 'Average', 'Poor'];
-$ACCIDENTS     = ['None', 'Minor', 'Major', 'Unknown'];
+$success_message = '';
+$error_message = '';
 
-$REGISTRATION_PCT = ['Updated' => 0.0, 'Expired' => -0.075, 'Unknown' => -0.03];
-$MAINTENANCE_PCT  = ['Excellent' => 0.0, 'Good' => -0.015, 'Average' => -0.075, 'Poor' => -0.20];
-$ACCIDENT_PCT     = ['None' => 0.0, 'Minor' => -0.10, 'Major' => -0.175, 'Unknown' => -0.05];
-$MODIFICATION_PCT = ['Stock / None' => 0.0, 'Minor Modifications' => -0.04, 'Major Modifications' => -0.125];
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        // Collect Section 1: Vehicle Selection
+        $brand = $_POST['brand'] ?? 'Toyota';
+        $model = $_POST['model'] ?? '';
+        $year_manufactured = $_POST['year_manufactured'] ?? '';
 
-// ... (scroll down to the database calculation block) ...
+        // Collect Section 2: Vehicle Specifications
+        $mileage = $_POST['mileage'] ?? 0;
+        $transmission = $_POST['transmission'] ?? '';
+        $fuel_type = $_POST['fuel_type'] ?? '';
+        $color = $_POST['color'] ?? '';
+        $plate_ending = $_POST['plate_ending'] ?? '';
 
-$f = $_POST;
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_listing'])) {
-    
-    $type  = 'Car'; 
-    $brand = trim($_POST['brand'] ?? '');
-    $model = trim($_POST['model'] ?? '');
-    $year_raw = trim($_POST['year'] ?? '');
-    $mileage_raw = trim($_POST['mileage'] ?? '');
-    $asking_price_raw = trim($_POST['asking_price'] ?? '');
-    $location = trim($_POST['location'] ?? '');
-    
-    $seller_name = trim($_POST['seller_name'] ?? '');
-    $seller_contact = trim($_POST['seller_contact'] ?? '');
-    
-    $transmission  = in_array($_POST['transmission'] ?? '', $TRANSMISSIONS) ? $_POST['transmission'] : $TRANSMISSIONS[0];
-    $fuel_type     = in_array($_POST['fuel_type'] ?? '', $FUEL_TYPES) ? $_POST['fuel_type'] : $FUEL_TYPES[0];
-    $modifications = in_array($_POST['modifications'] ?? '', $MODIFICATIONS) ? $_POST['modifications'] : $MODIFICATIONS[0];
-    $registration  = in_array($_POST['registration'] ?? '', $REGISTRATIONS) ? $_POST['registration'] : $REGISTRATIONS[0];
-    $maintenance   = in_array($_POST['maintenance'] ?? '', $MAINTENANCE) ? $_POST['maintenance'] : $MAINTENANCE[2];
-    $accidents     = in_array($_POST['accidents'] ?? '', $ACCIDENTS) ? $_POST['accidents'] : $ACCIDENTS[0];
-    $color = normalize_title($_POST['color'] ?? '');
-
-    // ---- STRICT VALIDATION ----
-    if ($brand === '') { $errors['brand'] = 'Required.'; }
-    if ($model === '') { $errors['model'] = 'Required.'; }
-    if ($year_raw === '' || !ctype_digit($year_raw)) { $errors['year'] = 'Required.'; }
-    
-    // Mileage Constraint
-    if ($mileage_raw === '' || !ctype_digit($mileage_raw) || (int)$mileage_raw < 0 || (int)$mileage_raw > 999999) { 
-        $errors['mileage'] = 'Valid mileage required (0 - 999,999 km).'; 
-    }
-    
-    // Asking Price Constraint (Min 20k, Max 50m)
-    if ($asking_price_raw === '' || !is_numeric($asking_price_raw) || (float)$asking_price_raw < 20000 || (float)$asking_price_raw > 50000000) { 
-        $errors['asking_price'] = 'Asking price must be between ₱20,000 and ₱50,000,000.'; 
-    }
-
-    // Historical Spec Constraints
-    if ($year_raw !== '') {
-        $y = (int)$year_raw;
-        if ($fuel_type === 'Electric' && $y < 2010) { $errors['fuel_type'] = 'Electric engines not available for this year.'; }
-        if ($fuel_type === 'Hybrid' && $y < 2005) { $errors['fuel_type'] = 'Hybrid engines not available for this year.'; }
-        if (in_array($transmission, ['Automatic', 'CVT']) && $y < 1995) { $errors['transmission'] = 'Automatic/CVT not available for this year.'; }
-    }
-    
-    // String Length Constraints
-    if ($seller_name === '') { $errors['seller_name'] = 'Name is required.'; }
-    elseif (strlen($seller_name) > 100) { $errors['seller_name'] = 'Name is too long (max 100 chars).'; }
-
-    if ($seller_contact === '') { $errors['seller_contact'] = 'Contact info is required.'; }
-    elseif (strlen($seller_contact) > 100) { $errors['seller_contact'] = 'Contact info is too long (max 100 chars).'; }
-
-    if (strlen($location) > 100) { $errors['location'] = 'Location is too long (max 100 chars).'; }
-    if (strlen($color) > 50) { $errors['color'] = 'Color is too long (max 50 chars).'; }
-
-    // ---- DATABASE INSERTION ----
-    if (empty($errors)) {
-        $year = (int)$year_raw;
-        $mileage = (int)$mileage_raw;
-        $asking_price = (float)$asking_price_raw;
-
-        $stmt = $pdo->prepare("SELECT * FROM reference_weights WHERE vehicle_type = ? AND LOWER(brand) = LOWER(?) AND LOWER(model) = LOWER(?) LIMIT 1");
-        $stmt->execute([$type, $brand, $model]);
-        $vehicle_data = $stmt->fetch();
-
-        $estimated_price = null;
-        if ($vehicle_data) {
-            $age = max(0, $current_year - $year);
-            $base = (float)$vehicle_data['base_price'];
-            
-            $age_pct = min(0.80, $age * 0.09);
-            $year_adj = $base * $age_pct;
-            
-            $mileage_pct = min(0.20, ($mileage / 10000) * 0.015);
-            $mileage_adj = $base * $mileage_pct;
-            
-            $cond_pct = $REGISTRATION_PCT[$registration] + $MAINTENANCE_PCT[$maintenance] + $ACCIDENT_PCT[$accidents] + $MODIFICATION_PCT[$modifications];
-            $cond_adj = $base * $cond_pct;
-            
-            $final_price = max(1000, $base - $year_adj - $mileage_adj + $cond_adj);
-            
-            // Blend with market data
-            $marketStmt = $pdo->prepare("SELECT AVG(asking_price) as avg_market_price, COUNT(*) as c FROM vehicle_listings WHERE LOWER(brand)=LOWER(?) AND LOWER(model)=LOWER(?) AND status='approved'");
-            $marketStmt->execute([$brand, $model]);
-            $marketData = $marketStmt->fetch();
-            if ($marketData['c'] > 0) {
-                $final_price = ($final_price + ((float)$marketData['avg_market_price'] + $cond_adj)) / 2;
-            }
-            $estimated_price = max(1000, $final_price);
+        // Collect Section 3: Modifications & Upgrades
+        $is_stock = $_POST['is_stock'] ?? 'Yes';
+        $modifications = 'Stock / None';
+        if ($is_stock === 'No' && isset($_POST['modifications'])) {
+            $modifications = implode(', ', $_POST['modifications']);
         }
 
-        $insert = $pdo->prepare("INSERT INTO vehicle_listings
-            (vehicle_type, brand, model, year_manufactured, mileage, color, transmission, fuel_type,
-             modifications, registration_status, maintenance_history, accident_history,
-             asking_price, predicted_value, location, status, listing_type, seller_name, seller_contact)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending','user_sale',?,?)");
+        // Collect Section 4: Condition & History
+        $first_owner = $_POST['first_owner'] ?? 'No';
+        $casa_maintained = $_POST['casa_maintained'] ?? 'No';
+        $accident_history = ($_POST['major_accident'] ?? 'No') === 'Yes' ? ($_POST['accident_details'] ?? 'Yes') : 'None';
+        $flooded = $_POST['flooded'] ?? 'No';
+        $general_condition = $_POST['general_condition'] ?? 'Good';
+
+        // Collect Section 5: Legal Documents
+        $lto_status = $_POST['lto_status'] ?? 'Updated';
+        $or_cr = $_POST['or_cr'] ?? 'Yes';
+        $fully_paid = $_POST['fully_paid'] ?? 'Yes';
+        $deed_of_sale = $_POST['deed_of_sale'] ?? 'Yes';
+
+        // Collect Section 6: Pricing & Payment
+        $asking_price = $_POST['asking_price'] ?? 0; // Captured from the hidden unformatted field
+        $price_negotiability = ($_POST['negotiable'] ?? 'No') === 'Yes' ? 'Negotiable' : 'Fixed Price';
+        $payment_methods = isset($_POST['payment_methods']) ? implode(', ', $_POST['payment_methods']) : 'Cash';
+        $trade_in = $_POST['trade_in'] ?? 'No';
+
+        // Collect Section 7: Location & Contact
+        $location = $_POST['location'] ?? '';
+        $seller_contact = $_POST['seller_contact'] ?? '';
         
-        $insert->execute([
-            $type, normalize_title($brand), normalize_title($model), $year, $mileage, 
-            $color !== '' ? $color : null, $transmission, $fuel_type, $modifications, 
-            $registration, $maintenance, $accidents, $asking_price, $estimated_price, 
-            $location !== '' ? $location : null, $seller_name, $seller_contact
+        // Collect Section 8: Final Touches
+        $reason_for_selling = $_POST['rfs'] ?? '';
+        $warranty_status = $_POST['warranty_status'] ?? 'No Warranty';
+        $seller_notes = $_POST['seller_notes'] ?? '';
+
+        // Insert into vehicle_listings table
+        $stmt = $pdo->prepare("
+            INSERT INTO vehicle_listings (
+                vehicle_type, brand, model, year_manufactured, mileage, color, 
+                transmission, fuel_type, modifications, registration_status, 
+                maintenance_history, accident_history, asking_price, price_negotiability, 
+                location, reason_for_selling, status, listing_type, seller_contact
+            ) VALUES (
+                'Car', ?, ?, ?, ?, ?, 
+                ?, ?, ?, ?, 
+                ?, ?, ?, ?, 
+                ?, ?, 'pending', 'user_sale', ?
+            )
+        ");
+
+        // Determine maintenance string based on casa & condition
+        $maintenance_history = $casa_maintained === 'Yes' ? 'Excellent (Casa)' : $general_condition;
+
+        $stmt->execute([
+            $brand, $model, $year_manufactured, $mileage, $color,
+            $transmission, $fuel_type, $modifications, $lto_status,
+            $maintenance_history, $accident_history, $asking_price, $price_negotiability,
+            $location, $reason_for_selling, $seller_contact
         ]);
-        
-        $success = true;
-        $f = []; // clear form
+
+        $success_message = "Your listing has been submitted successfully and is pending review.";
+    } catch (PDOException $e) {
+        $error_message = "Error submitting listing: " . $e->getMessage();
     }
 }
+
 include 'header.php';
 ?>
 
-<div class="view" style="max-width: 800px; margin: 0 auto;">
-  <div class="panel">
-    <div class="panel-head">
-      <div class="ic" style="background:var(--teal-soft);"><svg viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></div>
-      <h3>Sell Your Car</h3>
+<style>
+    .form-container {
+        background: #ffffff;
+        border-radius: 12px;
+        padding: 32px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        border: 1px solid #e5e7eb;
+        max-width: 900px;
+        margin: 0 auto;
+    }
+    .form-section {
+        margin-bottom: 32px;
+        padding-bottom: 24px;
+        border-bottom: 1px solid #f3f4f6;
+    }
+    .form-section:last-child {
+        border-bottom: none;
+    }
+    .section-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #111827;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .section-title span {
+        background: #5865f2;
+        color: white;
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        font-size: 12px;
+    }
+    .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+    }
+    .form-group {
+        display: flex;
+        flex-direction: column;
+        margin-bottom: 16px;
+    }
+    .form-group label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 8px;
+    }
+    .form-control {
+        padding: 10px 14px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 14px;
+        color: #111827;
+        background: #f9fafb;
+    }
+    .form-control:focus {
+        outline: none;
+        border-color: #5865f2;
+        box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.1);
+    }
+    .radio-group, .checkbox-group {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+    .radio-label, .checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 14px;
+        color: #4b5563;
+        cursor: pointer;
+    }
+    .btn-submit {
+        background: #5865f2;
+        color: white;
+        padding: 12px 24px;
+        border: none;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        width: 100%;
+        transition: background 0.2s;
+    }
+    .btn-submit:hover {
+        background: #4752c4;
+    }
+    .alert {
+        padding: 16px;
+        border-radius: 8px;
+        margin-bottom: 24px;
+        font-weight: 500;
+    }
+    .alert-success { background: #d1fae5; color: #065f46; border: 1px solid #34d399; }
+    .alert-danger { background: #fee2e2; color: #991b1b; border: 1px solid #f87171; }
+</style>
+
+<div class="view">
+    <div class="form-container">
+        <h2 style="font-size: 24px; font-weight: 800; margin-bottom: 8px;">Second-Hand Car Listing</h2>
+        <p style="color: #6b7280; margin-bottom: 32px;">Complete the sections below to generate a detailed verified listing for your vehicle.</p>
+
+        <?php if ($success_message): ?>
+            <div class="alert alert-success"><?php echo $success_message; ?></div>
+        <?php endif; ?>
+        <?php if ($error_message): ?>
+            <div class="alert alert-danger"><?php echo $error_message; ?></div>
+        <?php endif; ?>
+
+        <form method="POST" action="" enctype="multipart/form-data">
+            
+            <!-- 1. Select Your Vehicle -->
+            <div class="form-section">
+                <div class="section-title"><span>1</span> Select Your Vehicle</div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Car Brand</label>
+                        <input type="text" name="brand" class="form-control" value="Toyota" readonly style="background-color: #e5e7eb; color: #6b7280; cursor: not-allowed;" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Car Model</label>
+                        <select name="model" id="model-select" class="form-control" required>
+                            <option value="">Select model</option>
+                            <option value="Vios">Vios</option>
+                            <option value="Innova">Innova</option>
+                            <option value="Fortuner">Fortuner</option>
+                            <option value="Hilux">Hilux</option>
+                            <option value="Wigo">Wigo</option>
+                            <option value="Avanza">Avanza</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Year Model</label>
+                        <select name="year_manufactured" class="form-control" required>
+                            <option value="">Select year</option>
+                            <?php for($i = 2026; $i >= 2015; $i--): ?>
+                                <option value="<?php echo $i; ?>"><?php echo $i; ?></option>
+                            <?php endfor; ?>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Vehicle Specifications -->
+            <div class="form-section">
+                <div class="section-title"><span>2</span> Vehicle Specifications</div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Mileage (Max 999,999 km)</label>
+                        <input type="number" name="mileage" class="form-control" min="0" max="999999" placeholder="e.g. 45000" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Exterior Color</label>
+                        <select name="color" id="color-select" class="form-control" required disabled>
+                            <option value="">Select a model first</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Transmission</label>
+                        <div class="radio-group">
+                            <label class="radio-label"><input type="radio" name="transmission" value="Automatic" required> Automatic</label>
+                            <label class="radio-label"><input type="radio" name="transmission" value="Manual"> Manual</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Fuel Type</label>
+                        <div class="radio-group" id="fuel-radios">
+                            <label class="radio-label" id="fuel-gas"><input type="radio" name="fuel_type" id="radio-gas" value="Gasoline" required> Gas</label>
+                            <label class="radio-label" id="fuel-diesel"><input type="radio" name="fuel_type" id="radio-diesel" value="Diesel"> Diesel</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Plate Number Ending (Coding check)</label>
+                        <select name="plate_ending" class="form-control">
+                            <option value="">Select last digit</option>
+                            <?php for($i = 0; $i <= 9; $i++): ?>
+                                <option value="<?php echo $i; ?>"><?php echo $i; ?></option>
+                            <?php endfor; ?>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. Modifications & Upgrades -->
+            <div class="form-section">
+                <div class="section-title"><span>3</span> Modifications & Upgrades</div>
+                <div class="form-group">
+                    <label>Is the vehicle completely stock (no modifications)?</label>
+                    <div class="radio-group" style="margin-bottom: 16px;">
+                        <label class="radio-label"><input type="radio" name="is_stock" value="Yes" checked onclick="document.getElementById('mods-list').style.display='none'"> Yes</label>
+                        <label class="radio-label"><input type="radio" name="is_stock" value="No" onclick="document.getElementById('mods-list').style.display='flex'"> No</label>
+                    </div>
+                    <div id="mods-list" class="checkbox-group" style="display: none; flex-direction: column;">
+                        <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Upgraded Touchscreen"> Upgraded Touchscreen / Apple CarPlay / Android Auto</label>
+                        <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Leather Seats"> Leather Seats</label>
+                        <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Dashcam"> Dashcam / Upgraded Reverse Camera</label>
+                        <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Aftermarket Wheels"> Aftermarket Wheels / Mags</label>
+                        <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Modified Exhaust"> Modified Exhaust System</label>
+                        <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Modified Suspension"> Modified Suspension (Lifted or Lowered)</label>
+                        <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Engine Tune"> Engine Tune / ECU Remap</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Condition & History -->
+            <div class="form-section">
+                <div class="section-title"><span>4</span> Condition & History</div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>First Owner Vehicle?</label>
+                        <div class="radio-group">
+                            <label class="radio-label"><input type="radio" name="first_owner" value="Yes"> Yes</label>
+                            <label class="radio-label"><input type="radio" name="first_owner" value="No" checked> No</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Casa-Maintained with Complete Service Records?</label>
+                        <div class="radio-group">
+                            <label class="radio-label"><input type="radio" name="casa_maintained" value="Yes"> Yes</label>
+                            <label class="radio-label"><input type="radio" name="casa_maintained" value="No" checked> No</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Involved in Major Accident(s)?</label>
+                        <div class="radio-group" style="margin-bottom: 8px;">
+                            <label class="radio-label"><input type="radio" name="major_accident" value="Yes" onclick="document.getElementById('accident-details').style.display='block'"> Yes</label>
+                            <label class="radio-label"><input type="radio" name="major_accident" value="No" checked onclick="document.getElementById('accident-details').style.display='none'"> No</label>
+                        </div>
+                        <input type="text" name="accident_details" id="accident-details" class="form-control" placeholder="If Yes, provide details" style="display: none;">
+                    </div>
+                    <div class="form-group">
+                        <label>Flooded Vehicle History?</label>
+                        <div class="radio-group">
+                            <label class="radio-label"><input type="radio" name="flooded" value="Yes"> Yes</label>
+                            <label class="radio-label"><input type="radio" name="flooded" value="No" checked> No</label>
+                        </div>
+                    </div>
+                    <div class="form-group" style="grid-column: span 2;">
+                        <label>Overall General Condition</label>
+                        <div class="radio-group">
+                            <label class="radio-label"><input type="radio" name="general_condition" value="Excellent" required> Excellent</label>
+                            <label class="radio-label"><input type="radio" name="general_condition" value="Good"> Good</label>
+                            <label class="radio-label"><input type="radio" name="general_condition" value="Fair"> Fair</label>
+                            <label class="radio-label"><input type="radio" name="general_condition" value="Needs Minor Repairs"> Needs Minor Repairs</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. Legal Documents & Registration -->
+            <div class="form-section">
+                <div class="section-title"><span>5</span> Legal Documents & Registration</div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>LTO Registration Status</label>
+                        <select name="lto_status" class="form-control">
+                            <option value="Currently Registered">Currently Registered</option>
+                            <option value="Expired">Expired</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Original OR / CR On Hand?</label>
+                        <div class="radio-group">
+                            <label class="radio-label"><input type="radio" name="or_cr" value="Yes" checked> Yes</label>
+                            <label class="radio-label"><input type="radio" name="or_cr" value="No"> No</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Fully Paid (No Bank Encumbrance)?</label>
+                        <div class="radio-group">
+                            <label class="radio-label"><input type="radio" name="fully_paid" value="Yes" checked> Yes</label>
+                            <label class="radio-label"><input type="radio" name="fully_paid" value="No"> No</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Deed of Sale Ready?</label>
+                        <div class="radio-group">
+                            <label class="radio-label"><input type="radio" name="deed_of_sale" value="Yes" checked> Yes</label>
+                            <label class="radio-label"><input type="radio" name="deed_of_sale" value="No"> No</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. Pricing & Payment -->
+            <div class="form-section">
+                <div class="section-title"><span>6</span> Pricing & Payment</div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Asking Price (PHP)</label>
+                        <input type="text" id="display_price" class="form-control" placeholder="₱ 0" required>
+                        <input type="hidden" name="asking_price" id="actual_price">
+                    </div>
+                    <div class="form-group">
+                        <label>Price Negotiable?</label>
+                        <div class="radio-group">
+                            <label class="radio-label"><input type="radio" name="negotiable" value="Yes"> Yes</label>
+                            <label class="radio-label"><input type="radio" name="negotiable" value="No" checked> No</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Accepted Payment Methods</label>
+                        <div class="checkbox-group">
+                            <label class="checkbox-label"><input type="checkbox" name="payment_methods[]" value="Cash" checked> Cash</label>
+                            <label class="checkbox-label"><input type="checkbox" name="payment_methods[]" value="Bank Financing"> Bank Financing</label>
+                            <label class="checkbox-label"><input type="checkbox" name="payment_methods[]" value="Assume Balance"> Assume Balance</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Open to Trade-Ins?</label>
+                        <div class="radio-group">
+                            <label class="radio-label"><input type="radio" name="trade_in" value="Yes"> Yes</label>
+                            <label class="radio-label"><input type="radio" name="trade_in" value="No" checked> No</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 7. Photos & Location -->
+            <div class="form-section">
+                <div class="section-title"><span>7</span> Photos & Location</div>
+                <div class="form-group">
+                    <label>Vehicle Photos Checklist (Upload Images)</label>
+                    <p style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">Please attach clear photos of the Front View, Rear View, Side Profiles, Interior, and Dashboard.</p>
+                    <input type="file" name="vehicle_photos[]" class="form-control" multiple accept="image/*">
+                </div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Viewing Location</label>
+                        <input type="text" name="location" class="form-control" placeholder="City or Landmark" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Seller Contact Number</label>
+                        <input type="text" name="seller_contact" class="form-control" placeholder="e.g. 0917-123-4567" required>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 8. The "Final Touches" -->
+            <div class="form-section">
+                <div class="section-title"><span>8</span> The "Final Touches"</div>
+                <div class="form-group">
+                    <label>Reason for Selling (RFS)</label>
+                    <input type="text" name="rfs" class="form-control" placeholder="Enter reason for selling">
+                </div>
+                <div class="form-group">
+                    <label>Warranty Status</label>
+                    <div class="radio-group">
+                        <label class="radio-label"><input type="radio" name="warranty_status" value="Active"> Active Manufacturer / Dealer Warranty</label>
+                        <label class="radio-label"><input type="radio" name="warranty_status" value="No Warranty" checked> No Warranty</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Seller's Notes & Detailed Description</label>
+                    <textarea name="seller_notes" class="form-control" rows="4" placeholder="Any additional information..."></textarea>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-submit">Generate Verified Listing</button>
+        </form>
     </div>
-    <div class="panel-sub" style="max-width: 100%;">Submit your vehicle to our public marketplace.</div>
-    
-    <?php if ($success): ?>
-      <div class="alert alert-success">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
-        <span><b>Listing Submitted!</b> Your vehicle has been sent to our admin team for review.</span>
-      </div>
-      <div style="margin-top: 20px;"><a href="submit_listing.php" class="predict-btn" style="text-decoration:none; display:inline-flex;">Submit Another</a></div>
-    <?php else: ?>
-
-      <?php if (!empty($errors)): ?>
-        <div class="alert alert-error">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.01"/></svg>
-          <span>Please fix the highlighted field<?php echo count($errors) > 1 ? 's' : ''; ?> below.</span>
-        </div>
-      <?php endif; ?>
-      
-      <form method="POST" id="submitForm" novalidate>
-        <!-- Seller Info -->
-        <div class="form-section">
-          <div class="form-section-title">Seller Information</div>
-          <div class="form-grid">
-            <div class="field"><label>Your Name <span class="req">*</span></label>
-              <input type="text" name="seller_name" maxlength="100" placeholder="e.g., Juan Dela Cruz" value="<?php echo htmlspecialchars($f['seller_name'] ?? ''); ?>">
-              <div class="field-error"><?php echo htmlspecialchars($errors['seller_name'] ?? ''); ?></div>
-            </div>
-            <div class="field"><label>Contact Info <span class="req">*</span></label>
-              <input type="text" name="seller_contact" maxlength="100" placeholder="e.g., 0912 345 6789 or juan@email.com" value="<?php echo htmlspecialchars($f['seller_contact'] ?? ''); ?>">
-              <div class="field-error"><?php echo htmlspecialchars($errors['seller_contact'] ?? ''); ?></div>
-            </div>
-            <div class="field"><label>Location / City</label>
-              <input type="text" name="location" maxlength="100" placeholder="e.g., Manila" value="<?php echo htmlspecialchars($f['location'] ?? ''); ?>">
-              <div class="field-error"><?php echo htmlspecialchars($errors['location'] ?? ''); ?></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Vehicle Info -->
-        <div class="form-section">
-          <div class="form-section-title">Vehicle Information</div>
-          <div class="form-grid">
-            <div class="field"><label>Brand <span class="req">*</span></label>
-              <select name="brand" id="brand"><option value="">Select brand</option></select>
-              <div class="field-error"><?php echo htmlspecialchars($errors['brand'] ?? ''); ?></div>
-            </div>
-            <div class="field"><label>Model <span class="req">*</span></label>
-              <select name="model" id="model" disabled><option value="">Select model</option></select>
-              <div class="field-error"><?php echo htmlspecialchars($errors['model'] ?? ''); ?></div>
-            </div>
-            <div class="field"><label>Year <span class="req">*</span></label>
-              <select name="year" id="year" disabled><option value="">Select year</option></select>
-              <div class="field-error"><?php echo htmlspecialchars($errors['year'] ?? ''); ?></div>
-            </div>
-            <div class="field"><label>Mileage <span class="req">*</span></label>
-              <div class="input-suffix">
-                <input type="number" name="mileage" id="mileage" min="0" max="999999" step="1" 
-                       oninput="this.value = this.value.slice(0, 6)"
-                       value="<?php echo htmlspecialchars($f['mileage'] ?? ''); ?>">
-                <span>km</span>
-              </div>
-              <div class="field-error"><?php echo htmlspecialchars($errors['mileage'] ?? ''); ?></div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- Specs -->
-        <div class="form-section">
-          <div class="form-section-title">Specifications & Condition</div>
-          <div class="form-grid">
-            <div class="field"><label>Transmission</label>
-                <select name="transmission" id="transmission"><?php foreach ($TRANSMISSIONS as $opt): echo option($opt, $f['transmission'] ?? null); endforeach; ?></select>
-                <div class="field-error"><?php echo htmlspecialchars($errors['transmission'] ?? ''); ?></div>
-            </div>
-            <div class="field"><label>Fuel Type</label>
-                <select name="fuel_type" id="fuel_type"><?php foreach ($FUEL_TYPES as $opt): echo option($opt, $f['fuel_type'] ?? null); endforeach; ?></select>
-                <div class="field-error"><?php echo htmlspecialchars($errors['fuel_type'] ?? ''); ?></div>
-            </div>
-            <div class="field"><label>Color</label><input type="text" name="color" maxlength="50" value="<?php echo htmlspecialchars($f['color'] ?? ''); ?>"></div>
-            <div class="field"><label>Modifications</label><select name="modifications"><?php foreach ($MODIFICATIONS as $opt): echo option($opt, $f['modifications'] ?? null); endforeach; ?></select></div>
-            <div class="field"><label>Registration (LTO)</label><select name="registration"><?php foreach ($REGISTRATIONS as $opt): echo option($opt, $f['registration'] ?? null); endforeach; ?></select></div>
-            <div class="field"><label>Maintenance</label><select name="maintenance"><?php foreach ($MAINTENANCE as $opt): echo option($opt, $f['maintenance'] ?? 'Average'); endforeach; ?></select></div>
-            <div class="field" style="grid-column: span 2;"><label>Accident History</label><select name="accidents"><?php foreach ($ACCIDENTS as $opt): echo option($opt, $f['accidents'] ?? null); endforeach; ?></select></div>
-          </div>
-        </div>
-        
-        <!-- Pricing -->
-        <div class="form-section">
-          <div class="form-section-title">Pricing</div>
-          <div class="form-grid">
-            <div class="field"><label>Your Asking Price (₱) <span class="req">*</span></label>
-              <input type="number" name="asking_price" min="20000" max="50000000" step="1" 
-                     oninput="if(this.value.length > 8) this.value = this.value.slice(0,8);"
-                     value="<?php echo htmlspecialchars($f['asking_price'] ?? ''); ?>">
-              <div class="field-error"><?php echo htmlspecialchars($errors['asking_price'] ?? ''); ?></div>
-            </div>
-          </div>
-        </div>
-        
-        <div class="btn-row" style="margin-top: 30px;">
-          <input type="hidden" name="submit_listing" value="1">
-          <button type="submit" class="predict-btn" style="background: var(--teal);"><span style="color:white;">Submit Listing</span></button>
-        </div>
-      </form>
-    <?php endif; ?>
-  </div>
 </div>
 
 <script>
-const CATALOG = <?php echo json_encode($catalog, JSON_UNESCAPED_UNICODE); ?>;
-const INITIAL = { brand: <?php echo json_encode($f['brand'] ?? ''); ?>, model: <?php echo json_encode($f['model'] ?? ''); ?>, year: <?php echo json_encode($f['year'] ?? ''); ?> };
-const CURRENT_YEAR = <?php echo $current_year; ?>;
+document.addEventListener("DOMContentLoaded", function() {
+    
+    // --- 1. Dynamic Model Data (Toyota PH Spec Colors & Fuel) ---
+    const modelData = {
+        "Vios": {
+            colors: ["Super White", "White Pearl", "Silver Metallic", "Gray Metallic", "Attitude Black", "Red Mica Metallic", "Alumina Jade Metallic", "Blackish Red Mica"],
+            fuel: ["Gasoline"]
+        },
+        "Innova": {
+            colors: ["Super White", "White Pearl Crystal Shine", "Silver Metallic", "Blackish Red Mica", "Alumina Jade Metallic", "Attitude Black", "Bronze Mica Metallic"],
+            fuel: ["Diesel", "Gasoline"]
+        },
+        "Fortuner": {
+            colors: ["Super White", "White Pearl", "Silver Metallic", "Attitude Black Mica", "Gray Metallic", "Phantom Brown Metallic", "Nebula Blue Metallic", "Sparkling Black Pearl"],
+            fuel: ["Diesel", "Gasoline"]
+        },
+        "Hilux": {
+            colors: ["Super White", "Silver Metallic", "Gray Metallic", "Attitude Black Mica", "Crimson Spark Red Metallic", "Nebula Blue", "Orange Metallic", "Emotional Red"],
+            fuel: ["Diesel", "Gasoline"]
+        },
+        "Wigo": {
+            colors: ["Orange Metallic", "Silver Metallic", "Gray Metallic", "White", "Black", "Yellow", "Red Mica Metallic"],
+            fuel: ["Gasoline"]
+        },
+        "Avanza": {
+            colors: ["Silver Mica Metallic", "Gray Metallic", "Black Metallic", "Dark Red Mica", "White", "Nebula Blue", "Green Mica"],
+            fuel: ["Gasoline"]
+        }
+    };
 
-const brandSelect = document.getElementById('brand');
-const modelSelect = document.getElementById('model');
-const yearSelect  = document.getElementById('year');
-const transSelect = document.getElementById('transmission');
-const fuelSelect  = document.getElementById('fuel_type');
+    const modelSelect = document.getElementById("model-select");
+    const colorSelect = document.getElementById("color-select");
+    const fuelGasLabel = document.getElementById("fuel-gas");
+    const fuelDieselLabel = document.getElementById("fuel-diesel");
+    const radioGas = document.getElementById("radio-gas");
+    const radioDiesel = document.getElementById("radio-diesel");
 
-function updateSpecsBasedOnYear() {
-    const year = parseInt(yearSelect.value);
-    if (!year) return;
+    modelSelect.addEventListener("change", function() {
+        const selectedModel = this.value;
+        
+        colorSelect.innerHTML = '<option value="">Select a color</option>';
+        
+        if (modelData[selectedModel]) {
+            colorSelect.disabled = false;
+            
+            modelData[selectedModel].colors.forEach(function(color) {
+                const option = document.createElement("option");
+                option.value = color;
+                option.textContent = color;
+                colorSelect.appendChild(option);
+            });
+            
+            const otherOption = document.createElement("option");
+            otherOption.value = "Other / Custom";
+            otherOption.textContent = "Other / Custom Paint";
+            colorSelect.appendChild(otherOption);
 
-    // Fuel Type Constraints
-    Array.from(fuelSelect.options).forEach(opt => {
-        if (opt.value === 'Electric') opt.disabled = (year < 2010);
-        if (opt.value === 'Hybrid') opt.disabled = (year < 2005);
+            const availableFuels = modelData[selectedModel].fuel;
+            
+            if (availableFuels.includes("Gasoline")) {
+                fuelGasLabel.style.display = "inline-flex";
+            } else {
+                fuelGasLabel.style.display = "none";
+                radioGas.checked = false;
+            }
+            
+            if (availableFuels.includes("Diesel")) {
+                fuelDieselLabel.style.display = "inline-flex";
+            } else {
+                fuelDieselLabel.style.display = "none";
+                radioDiesel.checked = false;
+            }
+
+            if (availableFuels.length === 1) {
+                if (availableFuels[0] === "Gasoline") radioGas.checked = true;
+                if (availableFuels[0] === "Diesel") radioDiesel.checked = true;
+            }
+
+        } else {
+            colorSelect.disabled = true;
+            colorSelect.innerHTML = '<option value="">Select a model first</option>';
+            fuelGasLabel.style.display = "inline-flex";
+            fuelDieselLabel.style.display = "inline-flex";
+        }
     });
-    if (fuelSelect.options[fuelSelect.selectedIndex].disabled) { fuelSelect.value = 'Gasoline'; }
 
-    // Transmission Constraints
-    Array.from(transSelect.options).forEach(opt => {
-        if (opt.value === 'Automatic' || opt.value === 'CVT') { opt.disabled = (year < 1995); }
+    // --- 2. Money Formatter for Asking Price ---
+    const displayPrice = document.getElementById('display_price');
+    const actualPrice = document.getElementById('actual_price');
+
+    displayPrice.addEventListener('input', function(e) {
+        let value = this.value.replace(/\D/g, ""); 
+        
+        if (value) {
+            let intValue = parseInt(value, 10);
+            actualPrice.value = intValue; 
+            this.value = "₱ " + intValue.toLocaleString('en-US');
+        } else {
+            actualPrice.value = "";
+            this.value = "";
+        }
     });
-    if (transSelect.options[transSelect.selectedIndex].disabled) { transSelect.value = 'Manual'; }
-}
-
-function resetSelect(select, placeholder) {
-  select.innerHTML = '';
-  const opt = document.createElement('option'); opt.value = ''; opt.textContent = placeholder;
-  select.appendChild(opt); select.disabled = true;
-}
-function fillSelect(select, values, selected, placeholder) {
-  resetSelect(select, placeholder, false);
-  values.forEach(function(v) {
-    const opt = document.createElement('option'); opt.value = v; opt.textContent = v;
-    if (String(v) === String(selected)) opt.selected = true;
-    select.appendChild(opt);
-  });
-  select.disabled = false;
-}
-function refreshBrands(selectedBrand) {
-  const type = 'Car'; 
-  if (!CATALOG[type]) { resetSelect(brandSelect, 'Select brand'); return; }
-  fillSelect(brandSelect, Object.keys(CATALOG[type]), selectedBrand, 'Select brand');
-}
-function refreshModels(selectedModel) {
-  const brand = brandSelect.value;
-  if (!brand || !CATALOG['Car'] || !CATALOG['Car'][brand]) { resetSelect(modelSelect, 'Select model'); return; }
-  fillSelect(modelSelect, Object.keys(CATALOG['Car'][brand]), selectedModel, 'Select model');
-}
-function refreshYears(selectedYear) {
-  const brand = brandSelect.value; const model = modelSelect.value;
-  const info = (brand && model && CATALOG['Car'] && CATALOG['Car'][brand]) ? CATALOG['Car'][brand][model] : null;
-  if (!info) { resetSelect(yearSelect, 'Select year'); return; }
-  const years = [];
-  for (let y = (info.year_end || CURRENT_YEAR); y >= info.year_start; y--) years.push(y);
-  fillSelect(yearSelect, years, selectedYear, 'Select year');
-}
-
-brandSelect.addEventListener('change', function() { refreshModels(null); resetSelect(yearSelect, 'Select year'); });
-modelSelect.addEventListener('change', function() { refreshYears(null); });
-yearSelect.addEventListener('change', updateSpecsBasedOnYear);
-
-(function initCascade() {
-  refreshBrands(INITIAL.brand);
-  if (INITIAL.brand) { 
-      refreshModels(INITIAL.model); 
-      if (INITIAL.model) { 
-          refreshYears(INITIAL.year); 
-          updateSpecsBasedOnYear(); 
-      } 
-  } else { 
-      resetSelect(modelSelect, 'Select model'); 
-      resetSelect(yearSelect, 'Select year'); 
-  }
-})();
+});
 </script>
+
 <?php include 'footer.php'; ?>
