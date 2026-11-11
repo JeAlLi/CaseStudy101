@@ -23,8 +23,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Collect Section 3: Modifications & Upgrades
         $is_stock = $_POST['is_stock'] ?? 'Yes';
         $modifications = 'Stock / None';
-        if ($is_stock === 'No' && isset($_POST['modifications'])) {
-            $modifications = implode(', ', $_POST['modifications']);
+        if ($is_stock === 'No') {
+            $mod_list = $_POST['modifications'] ?? [];
+            if (!empty($_POST['other_modifications'])) {
+                $mod_list[] = trim($_POST['other_modifications']);
+            }
+            if (!empty($mod_list)) {
+                $modifications = implode(', ', $mod_list);
+            }
         }
 
         // Collect Section 4: Condition & History
@@ -41,43 +47,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $deed_of_sale = $_POST['deed_of_sale'] ?? 'Yes';
 
         // Collect Section 6: Pricing & Payment
-        $asking_price = $_POST['asking_price'] ?? 0; // Captured from the hidden unformatted field
+        $asking_price = $_POST['asking_price'] ?? 0;
         $price_negotiability = ($_POST['negotiable'] ?? 'No') === 'Yes' ? 'Negotiable' : 'Fixed Price';
         $payment_methods = isset($_POST['payment_methods']) ? implode(', ', $_POST['payment_methods']) : 'Cash';
         $trade_in = $_POST['trade_in'] ?? 'No';
 
-        // Collect Section 7: Location & Contact
-        $location = $_POST['location'] ?? '';
-        $seller_contact = $_POST['seller_contact'] ?? '';
+        // Collect Section 8: Seller Information
+        $seller_name = $_POST['seller_name'] ?? '';
+        $primary_contact = $_POST['seller_contact'] ?? '';
+        $other_contact = $_POST['other_contact'] ?? '';
         
-        // Collect Section 8: Final Touches
+        // Combine contacts if an alternative modality is provided
+        $seller_contact = $primary_contact;
+        if (!empty($other_contact)) {
+            $seller_contact .= ' (' . trim($other_contact) . ')';
+        }
+        $location = $_POST['location'] ?? '';
+        
+        // Collect Section 9: Final Touches
         $reason_for_selling = $_POST['rfs'] ?? '';
         $warranty_status = $_POST['warranty_status'] ?? 'No Warranty';
         $seller_notes = $_POST['seller_notes'] ?? '';
 
-        // Insert into vehicle_listings table
+        // --- Handle Section 7: Photo Uploads ---
+        $upload_dir = 'uploads/';
+        // Create uploads folder if it doesn't exist
+        if (!is_dir($upload_dir)) {
+            mkdir($upload_dir, 0777, true);
+        }
+
+        $photo_fields = ['photo_front', 'photo_rear', 'photo_side', 'photo_engine', 'photo_interior', 'photo_dashboard'];
+        $uploaded_files = [];
+
+        foreach ($photo_fields as $field) {
+            $uploaded_files[$field] = null; // Default to null if no photo
+            
+            if (isset($_FILES[$field]) && $_FILES[$field]['error'] === UPLOAD_ERR_OK) {
+                // Generate a unique file name to prevent overwriting (e.g., 65f3a4b2_front.jpg)
+                $file_extension = pathinfo($_FILES[$field]['name'], PATHINFO_EXTENSION);
+                $new_filename = uniqid() . '_' . $field . '.' . $file_extension;
+                $destination = $upload_dir . $new_filename;
+                
+                if (move_uploaded_file($_FILES[$field]['tmp_name'], $destination)) {
+                    $uploaded_files[$field] = $new_filename; // Save only the filename to the database
+                }
+            }
+        }
+
+        // Insert into vehicle_listings table (Now including photo columns)
         $stmt = $pdo->prepare("
             INSERT INTO vehicle_listings (
                 vehicle_type, brand, model, year_manufactured, mileage, color, 
-                transmission, fuel_type, modifications, registration_status, 
-                maintenance_history, accident_history, asking_price, price_negotiability, 
-                location, reason_for_selling, status, listing_type, seller_contact
+                transmission, fuel_type, modifications, registration_status, or_cr_ready, fully_paid, deed_of_sale_ready,
+                maintenance_history, accident_history, first_owner, flooded, 
+                asking_price, price_negotiability, payment_methods, trade_in,
+                location, reason_for_selling, warranty_status, seller_notes, 
+                photo_front, photo_rear, photo_side, photo_engine, photo_interior, photo_dashboard,
+                status, listing_type, seller_name, seller_contact
             ) VALUES (
                 'Car', ?, ?, ?, ?, ?, 
+                ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, 
-                ?, ?, ?, ?, 
-                ?, ?, 'pending', 'user_sale', ?
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, 
+                'pending', 'user_sale', ?, ?
             )
         ");
 
-        // Determine maintenance string based on casa & condition
         $maintenance_history = $casa_maintained === 'Yes' ? 'Excellent (Casa)' : $general_condition;
 
         $stmt->execute([
             $brand, $model, $year_manufactured, $mileage, $color,
-            $transmission, $fuel_type, $modifications, $lto_status,
-            $maintenance_history, $accident_history, $asking_price, $price_negotiability,
-            $location, $reason_for_selling, $seller_contact
+            $transmission, $fuel_type, $modifications, $lto_status, $or_cr, $fully_paid, $deed_of_sale,
+            $maintenance_history, $accident_history, $first_owner, $flooded,
+            $asking_price, $price_negotiability, $payment_methods, $trade_in,
+            $location, $reason_for_selling, $warranty_status, $seller_notes,
+            // Pass the generated photo filenames to the database
+            $uploaded_files['photo_front'], $uploaded_files['photo_rear'], $uploaded_files['photo_side'], 
+            $uploaded_files['photo_engine'], $uploaded_files['photo_interior'], $uploaded_files['photo_dashboard'],
+            $seller_name, $seller_contact
         ]);
 
         $success_message = "Your listing has been submitted successfully and is pending review.";
@@ -192,6 +241,50 @@ include 'header.php';
     }
     .alert-success { background: #d1fae5; color: #065f46; border: 1px solid #34d399; }
     .alert-danger { background: #fee2e2; color: #991b1b; border: 1px solid #f87171; }
+
+    /* Custom Camera Upload Styling */
+    .photo-capture-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+    .photo-upload-box {
+        border: 2px dashed #d1d5db;
+        border-radius: 8px;
+        padding: 20px 10px;
+        text-align: center;
+        background: #f9fafb;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+    .camera-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: #5865f2;
+        color: white;
+        padding: 10px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 600;
+        margin-top: 8px;
+        transition: background 0.2s;
+    }
+    .camera-btn:hover { background: #4752c4; }
+    .camera-btn svg { width: 16px; height: 16px; }
+    .photo-preview {
+        margin-top: 12px;
+        width: 100%;
+        border-radius: 6px;
+        height: 120px;
+        object-fit: cover;
+        border: 1px solid #e5e7eb;
+    }
 </style>
 
 <div class="view">
@@ -206,6 +299,7 @@ include 'header.php';
             <div class="alert alert-danger"><?php echo $error_message; ?></div>
         <?php endif; ?>
 
+        <!-- Added enctype="multipart/form-data" required for file uploads -->
         <form method="POST" action="" enctype="multipart/form-data">
             
             <!-- 1. Select Your Vehicle -->
@@ -245,8 +339,8 @@ include 'header.php';
                 <div class="section-title"><span>2</span> Vehicle Specifications</div>
                 <div class="grid-2">
                     <div class="form-group">
-                        <label>Mileage (Max 999,999 km)</label>
-                        <input type="number" name="mileage" class="form-control" min="0" max="999999" placeholder="e.g. 45000" required>
+                        <label>Mileage (Max 5,250,000 km)</label>
+                        <input type="number" name="mileage" class="form-control" min="0" max="5250000" placeholder="e.g. 45000" required>
                     </div>
                     <div class="form-group">
                         <label>Exterior Color</label>
@@ -297,6 +391,10 @@ include 'header.php';
                         <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Modified Exhaust"> Modified Exhaust System</label>
                         <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Modified Suspension"> Modified Suspension (Lifted or Lowered)</label>
                         <label class="checkbox-label"><input type="checkbox" name="modifications[]" value="Engine Tune"> Engine Tune / ECU Remap</label>
+                        <div style="margin-top: 12px; width: 100%; max-width: 400px;">
+                            <label style="font-size: 13px; font-weight: 600; color: #374151;">Specify Other Modifications:</label>
+                            <input type="text" name="other_modifications" class="form-control" placeholder="e.g., Roof rack, Ambient lighting" style="margin-top: 6px;">
+                        </div>
                     </div>
                 </div>
             </div>
@@ -415,29 +513,100 @@ include 'header.php';
                 </div>
             </div>
 
-            <!-- 7. Photos & Location -->
+            <!-- 7. Photos (Camera Integration) -->
             <div class="form-section">
-                <div class="section-title"><span>7</span> Photos & Location</div>
-                <div class="form-group">
-                    <label>Vehicle Photos Checklist (Upload Images)</label>
-                    <p style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">Please attach clear photos of the Front View, Rear View, Side Profiles, Interior, and Dashboard.</p>
-                    <input type="file" name="vehicle_photos[]" class="form-control" multiple accept="image/*">
-                </div>
-                <div class="grid-2">
-                    <div class="form-group">
-                        <label>Viewing Location</label>
-                        <input type="text" name="location" class="form-control" placeholder="City or Landmark" required>
+                <div class="section-title"><span>7</span> Photos</div>
+                <p style="font-size: 13px; color: #6b7280; margin-bottom: 16px;">Tap the buttons below to open your camera and capture each required angle.</p>
+                
+                <div class="photo-capture-grid">
+                    <!-- Front View -->
+                    <div class="photo-upload-box">
+                        <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Front View</label>
+                        <label for="photo_front" class="camera-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
+                        </label>
+                        <input type="file" id="photo_front" name="photo_front" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_front')" required>
+                        <img id="preview_front" class="photo-preview" style="display: none;">
                     </div>
-                    <div class="form-group">
-                        <label>Seller Contact Number</label>
-                        <input type="text" name="seller_contact" class="form-control" placeholder="e.g. 0917-123-4567" required>
+
+                    <!-- Rear View -->
+                    <div class="photo-upload-box">
+                        <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Rear View</label>
+                        <label for="photo_rear" class="camera-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
+                        </label>
+                        <input type="file" id="photo_rear" name="photo_rear" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_rear')" required>
+                        <img id="preview_rear" class="photo-preview" style="display: none;">
+                    </div>
+
+                    <!-- Side Profile -->
+                    <div class="photo-upload-box">
+                        <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Side Profile</label>
+                        <label for="photo_side" class="camera-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
+                        </label>
+                        <input type="file" id="photo_side" name="photo_side" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_side')" required>
+                        <img id="preview_side" class="photo-preview" style="display: none;">
+                    </div>
+
+                    <!-- Engine Bay -->
+                    <div class="photo-upload-box">
+                        <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Engine Bay</label>
+                        <label for="photo_engine" class="camera-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
+                        </label>
+                        <input type="file" id="photo_engine" name="photo_engine" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_engine')" required>
+                        <img id="preview_engine" class="photo-preview" style="display: none;">
+                    </div>
+
+                    <!-- Interior -->
+                    <div class="photo-upload-box">
+                        <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Interior & Seats</label>
+                        <label for="photo_interior" class="camera-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
+                        </label>
+                        <input type="file" id="photo_interior" name="photo_interior" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_interior')" required>
+                        <img id="preview_interior" class="photo-preview" style="display: none;">
+                    </div>
+
+                    <!-- Dashboard / Odometer -->
+                    <div class="photo-upload-box">
+                        <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Dashboard & Odometer</label>
+                        <label for="photo_dashboard" class="camera-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
+                        </label>
+                        <input type="file" id="photo_dashboard" name="photo_dashboard" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_dashboard')" required>
+                        <img id="preview_dashboard" class="photo-preview" style="display: none;">
                     </div>
                 </div>
             </div>
 
-            <!-- 8. The "Final Touches" -->
+            <!-- 8. Seller Information -->
             <div class="form-section">
-                <div class="section-title"><span>8</span> The "Final Touches"</div>
+                <div class="section-title"><span>8</span> Seller Information</div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Seller Name</label>
+                        <input type="text" name="seller_name" class="form-control" placeholder="Full Name" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Primary Contact Number</label>
+                        <input type="text" name="seller_contact" class="form-control" placeholder="e.g. 0917-123-4567" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Other Contact Method (Optional)</label>
+                        <input type="text" name="other_contact" class="form-control" placeholder="e.g. Viber, Email, FB Messenger">
+                    </div>
+                    <div class="form-group">
+                        <label>Viewing Location</label>
+                        <input type="text" name="location" class="form-control" placeholder="City or Landmark (e.g. Makati City)" required>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 9. The "Final Touches" -->
+            <div class="form-section">
+                <div class="section-title"><span>9</span> The "Final Touches"</div>
                 <div class="form-group">
                     <label>Reason for Selling (RFS)</label>
                     <input type="text" name="rfs" class="form-control" placeholder="Enter reason for selling">
@@ -461,6 +630,19 @@ include 'header.php';
 </div>
 
 <script>
+// --- Image Preview for Camera Captures ---
+function previewImage(input, previewId) {
+    const preview = document.getElementById(previewId);
+    if (input.files && input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            preview.src = e.target.result;
+            preview.style.display = 'block';
+        }
+        reader.readAsDataURL(input.files[0]);
+    }
+}
+
 document.addEventListener("DOMContentLoaded", function() {
     
     // --- 1. Dynamic Model Data (Toyota PH Spec Colors & Fuel) ---

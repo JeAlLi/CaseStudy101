@@ -1,258 +1,391 @@
 <?php
 session_start();
-require_once '../db.php';
 
-// Ensure the user is an authenticated admin
-if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
-    header("Location: index.php");
-    exit;
-}
+// Connect to the database in the main folder
+require_once 'C:/xampp2/htdocs/CaseStudy101/db.php';
+$current_page = 'pending_list';
 
-$current_page = 'pending_listings';
+// Handle Approve / Reject Actions
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && isset($_POST['listing_id'])) {
+    $listing_id = (int)$_POST['listing_id'];
+    $action = $_POST['action'];
 
-// Handle Actions (Approve, Reject, Delete)
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['action']) && isset($_POST['listing_id'])) {
-        $action = $_POST['action'];
-        $id = (int)$_POST['listing_id'];
-        
-        if ($action === 'approve') {
-            $stmt = $pdo->prepare("UPDATE vehicle_listings SET status = 'approved' WHERE id = ?");
-            $stmt->execute([$id]);
-        } elseif ($action === 'reject') {
-            $stmt = $pdo->prepare("UPDATE vehicle_listings SET status = 'rejected' WHERE id = ?");
-            $stmt->execute([$id]);
-        } elseif ($action === 'delete') {
-            $stmt = $pdo->prepare("DELETE FROM vehicle_listings WHERE id = ?");
-            $stmt->execute([$id]);
-        }
-        header("Location: pending_listings.php");
-        exit;
+    if ($action === 'approve') {
+        $updateStmt = $pdo->prepare("UPDATE vehicle_listings SET status = 'approved' WHERE id = ?");
+        $updateStmt->execute([$listing_id]);
+        $msg = "Listing #{$listing_id} has been approved and is now live.";
+    } elseif ($action === 'reject') {
+        $updateStmt = $pdo->prepare("UPDATE vehicle_listings SET status = 'rejected' WHERE id = ?");
+        $updateStmt->execute([$listing_id]);
+        $msg = "Listing #{$listing_id} has been rejected.";
     }
 }
 
-// --- DYNAMIC SEARCH & SORTING ALGORITHM ---
+// Fetch all pending listings
+$stmt = $pdo->query("SELECT * FROM vehicle_listings WHERE status = 'pending' ORDER BY date_added ASC");
+$pending_listings = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$search = isset($_GET['search']) ? trim($_GET['search']) : '';
-$allowed_sorts = ['id', 'brand', 'asking_price', 'listing_type'];
-$sort = isset($_GET['sort']) && in_array($_GET['sort'], $allowed_sorts) ? $_GET['sort'] : 'id';
-$dir = isset($_GET['dir']) && $_GET['dir'] === 'ASC' ? 'ASC' : 'DESC';
-$next_dir = ($dir === 'ASC') ? 'DESC' : 'ASC';
-
-// Build SQL Query - Strictly locked to 'pending' status
-$sql = "SELECT * FROM vehicle_listings WHERE status = 'pending'";
-$params = [];
-
-if ($search !== '') {
-    // Use AND to keep the pending lock while searching
-    $sql .= " AND (brand LIKE ? OR model LIKE ? OR listing_type LIKE ? OR year_manufactured LIKE ?)";
-    $search_param = "%{$search}%";
-    $params = [$search_param, $search_param, $search_param, $search_param];
-}
-
-$sql .= " ORDER BY $sort $dir";
-$stmt = $pdo->prepare($sql);
-$stmt->execute($params);
-$listings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-function sortLink($column, $label, $current_sort, $current_dir, $next_dir, $search) {
-    $icon = '';
-    if ($current_sort === $column) {
-        $icon = $current_dir === 'ASC' ? ' <span style="font-size:10px;">▲</span>' : ' <span style="font-size:10px;">▼</span>';
-    }
-    $search_param = $search !== '' ? '&search=' . urlencode($search) : '';
-    $url = "?sort={$column}&dir=" . ($current_sort === $column ? $next_dir : 'ASC') . $search_param;
-    return "<a href='{$url}' style='color:inherit; text-decoration:none; display:flex; align-items:center; gap:4px;'>{$label}{$icon}</a>";
-}
-
+// Include the header located inside the admin folder
 include 'header.php';
 ?>
 
 <style>
-  .admin-panel { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 24px; }
-  .panel-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-  .search-form { display: flex; gap: 8px; align-items: center; }
-  .search-input { padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; width: 250px; outline: none; transition: 0.2s; }
-  .search-input:focus { border-color: #5865f2; box-shadow: 0 0 0 3px rgba(88,101,242,0.1); }
-  .btn-search { background: #5865f2; color: #fff; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: 0.2s; }
-  .btn-search:hover { background: #4752c4; }
-  .btn-clear { background: #f3f4f6; color: #4b5563; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; text-decoration: none; }
-  
-  .table-container { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
-  th { background: #f9fafb; padding: 12px 16px; color: #374151; font-weight: 600; border-bottom: 2px solid #e5e7eb; }
-  th a:hover { color: #3b82f6 !important; }
-  td { padding: 12px 16px; border-bottom: 1px solid #e5e7eb; color: #111827; }
-  tr:hover { background: #f9fafb; }
-  
-  .badge { padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: capitalize; }
-  .badge.pending { background: #fef3c7; color: #d97706; }
-  .badge.user { background: #f3e8ff; color: #9333ea; }
-  .badge.scraped { background: #e0e7ff; color: #4f46e5; }
+    .admin-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    .page-title {
+        font-size: 24px;
+        font-weight: 800;
+        color: #111827;
+        margin-bottom: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .badge-count {
+        background: #ef4444;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 14px;
+        font-weight: 700;
+    }
+    .listing-card {
+        background: #ffffff;
+        border-radius: 12px;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        margin-bottom: 24px;
+        overflow: hidden;
+    }
+    .listing-header {
+        background: #f9fafb;
+        padding: 16px 24px;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        cursor: pointer; 
+        transition: background 0.2s;
+    }
+    .listing-header:hover {
+        background: #f3f4f6; 
+    }
+    .listing-title {
+        font-size: 18px;
+        font-weight: 800;
+        color: #111827;
+    }
+    .listing-price-container {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+    .listing-price {
+        font-size: 20px;
+        font-weight: 800;
+        color: #10b981;
+    }
+    
+    .chevron-icon {
+        width: 20px;
+        height: 20px;
+        color: #6b7280;
+        transition: transform 0.3s ease;
+    }
+    .listing-card.expanded .chevron-icon {
+        transform: rotate(180deg);
+    }
 
-  .action-btns { display: flex; gap: 8px; align-items: center; }
-  .btn-icon { background: none; border: none; cursor: pointer; padding: 6px; border-radius: 4px; transition: 0.2s; color: #6b7280; display: inline-flex; }
-  .btn-icon:hover { background: #e5e7eb; }
-  .btn-view:hover { color: #3b82f6; }
-  .btn-edit:hover { color: #8b5cf6; }
-  .btn-approve { background: #10b981; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 600; border: none; cursor: pointer; }
-  .btn-approve:hover { background: #059669; }
-  .btn-reject { background: #ef4444; color: white; padding: 6px 12px; border-radius: 6px; font-weight: 600; border: none; cursor: pointer; }
-  .btn-reject:hover { background: #dc2626; }
+    .listing-body {
+        padding: 24px;
+        display: none; 
+        grid-template-columns: repeat(4, 1fr);
+        gap: 24px;
+    }
+    .listing-actions {
+        background: #f9fafb;
+        padding: 16px 24px;
+        border-top: 1px solid #e5e7eb;
+        display: none; 
+        justify-content: flex-end;
+        gap: 12px;
+    }
+    .listing-card.expanded .listing-body {
+        display: grid;
+    }
+    .listing-card.expanded .listing-actions {
+        display: flex;
+    }
 
-  /* Modal Styling */
-  .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(17, 24, 39, 0.7); z-index: 1000; justify-content: center; align-items: center; }
-  .modal-overlay.active { display: flex; }
-  .modal-content { background: #fff; width: 100%; max-width: 600px; border-radius: 12px; padding: 24px; position: relative; max-height: 90vh; overflow-y: auto; }
-  .modal-close { position: absolute; top: 16px; right: 16px; cursor: pointer; color: #6b7280; background: none; border: none; font-size: 20px; }
-  .modal-title { font-size: 20px; font-weight: 700; margin-bottom: 16px; color: #111827; }
-  .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
-  .data-group { background: #f9fafb; padding: 12px; border-radius: 8px; border: 1px solid #e5e7eb; }
-  .data-lbl { font-size: 11px; color: #6b7280; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
-  .data-val { font-size: 14px; font-weight: 600; color: #111827; }
-  .price-highlight { background: #eff6ff; border-color: #bfdbfe; }
-  .price-highlight .data-val { color: #1d4ed8; font-size: 16px; }
+    .info-group { margin-bottom: 16px; }
+    .info-label {
+        font-size: 12px;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+    .info-value {
+        font-size: 14px;
+        color: #111827;
+        font-weight: 500;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 700;
+    }
+    .status-yes { background: #d1fae5; color: #065f46; }
+    .status-no { background: #fee2e2; color: #991b1b; }
+    
+    .btn {
+        padding: 10px 20px;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn-approve { background: #10b981; color: white; }
+    .btn-reject { background: #ef4444; color: white; border: 1px solid #dc2626; }
+    
+    .section-divider {
+        grid-column: span 4;
+        height: 1px;
+        background: #e5e7eb;
+        margin: 8px 0;
+    }
+    .empty-state {
+        text-align: center;
+        padding: 48px;
+        background: white;
+        border-radius: 12px;
+        border: 1px solid #e5e7eb;
+        color: #6b7280;
+    }
+    
+    /* Photo Gallery Styling */
+    .photo-gallery {
+        display: flex;
+        gap: 16px;
+        overflow-x: auto;
+        padding-bottom: 8px;
+    }
+    .photo-item {
+        flex: 0 0 auto;
+        width: 160px;
+        text-align: center;
+    }
+    .photo-item img {
+        width: 100%;
+        height: 110px;
+        object-fit: cover;
+        border-radius: 8px;
+        border: 1px solid #e5e7eb;
+        background: #f3f4f6;
+    }
+    .photo-item-label {
+        font-size: 11px;
+        color: #6b7280;
+        margin-top: 6px;
+        font-weight: 600;
+    }
 </style>
 
-<div class="view" style="display: block; width: 100%; max-width: none;">
-  <div class="admin-panel">
-    
-    <div class="panel-header-row">
-        <div>
-            <h2 style="margin:0 0 8px 0; color: #d97706;">Pending Approvals</h2>
-            <p style="color: #6b7280; margin: 0;">Review user-submitted listings before they go live on the prediction market.</p>
+<div class="view admin-container">
+    <div class="page-title">
+        Review Pending Listings
+        <span class="badge-count"><?php echo count($pending_listings); ?> Pending</span>
+    </div>
+
+    <?php if (isset($msg)): ?>
+        <div style="padding: 16px; background: #eff6ff; color: #1e3a8a; border-radius: 8px; margin-bottom: 24px; font-weight: 600;">
+            <?php echo $msg; ?>
         </div>
+    <?php endif; ?>
+
+    <?php if (count($pending_listings) === 0): ?>
+        <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 48px; height: 48px; margin-bottom: 16px; opacity: 0.5;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            <h3>All caught up!</h3>
+            <p>There are currently no pending vehicle listings to review.</p>
+        </div>
+    <?php else: ?>
         
-        <!-- SEARCH BAR -->
-        <form method="GET" action="pending_listings.php" class="search-form">
-            <input type="hidden" name="sort" value="<?php echo htmlspecialchars($sort); ?>">
-            <input type="hidden" name="dir" value="<?php echo htmlspecialchars($dir); ?>">
-            <input type="text" name="search" class="search-input" placeholder="Search pending vehicles..." value="<?php echo htmlspecialchars($search); ?>">
-            <button type="submit" class="btn-search">Search</button>
-            <?php if ($search !== ''): ?>
-                <a href="?sort=<?php echo $sort; ?>&dir=<?php echo $dir; ?>" class="btn-clear">Clear</a>
-            <?php endif; ?>
-        </form>
-    </div>
-    
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th><?php echo sortLink('id', 'ID', $sort, $dir, $next_dir, $search); ?></th>
-            <th><?php echo sortLink('brand', 'Vehicle', $sort, $dir, $next_dir, $search); ?></th>
-            <th><?php echo sortLink('asking_price', 'Asking Price', $sort, $dir, $next_dir, $search); ?></th>
-            <th><?php echo sortLink('listing_type', 'Source', $sort, $dir, $next_dir, $search); ?></th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php foreach ($listings as $car): ?>
-          <tr>
-            <td>#<?php echo $car['id']; ?></td>
-            <td>
-                <b><?php echo htmlspecialchars($car['year_manufactured'] . ' ' . $car['brand'] . ' ' . $car['model']); ?></b><br>
-                <span style="font-size:12px; color:#6b7280;"><?php echo number_format($car['mileage']); ?> km • <?php echo htmlspecialchars($car['transmission']); ?></span>
-            </td>
-            <td>
-                <b>₱<?php echo number_format($car['asking_price']); ?></b>
-                <?php if($car['predicted_value'] > 0): ?>
-                    <br><span style="font-size:12px; color:#3b82f6;">System Est: ₱<?php echo number_format($car['predicted_value']); ?></span>
-                <?php endif; ?>
-            </td>
-            <td><span class="badge <?php echo $car['listing_type']; ?>"><?php echo htmlspecialchars($car['listing_type']); ?></span></td>
-            <td>
-              <div class="action-btns">
-                <button class="btn-icon btn-view" title="View Details" onclick='openModal(<?php echo json_encode($car, JSON_HEX_APOS | JSON_HEX_QUOT); ?>)'>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                </button>
-                <a href="edit_listing.php?id=<?php echo $car['id']; ?>" class="btn-icon btn-edit" title="Edit Listing">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                </a>
-                
-                <!-- Expanded Approve & Reject buttons for easy clicking -->
-                <form method="POST" style="display:inline;">
-                    <input type="hidden" name="action" value="approve">
-                    <input type="hidden" name="listing_id" value="<?php echo $car['id']; ?>">
-                    <button type="submit" class="btn-approve">Approve</button>
-                </form>
+        <?php foreach ($pending_listings as $car): ?>
+            <div class="listing-card">
+                <div class="listing-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div>
+                        <span style="font-size: 13px; color: #6b7280; font-weight: 600;">LISTING #<?php echo htmlspecialchars($car['id'] ?? 'N/A'); ?></span>
+                        <div class="listing-title"><?php echo htmlspecialchars(($car['year_manufactured'] ?? 'N/A') . ' ' . ($car['brand'] ?? 'N/A') . ' ' . ($car['model'] ?? 'N/A')); ?></div>
+                    </div>
+                    <div class="listing-price-container">
+                        <div class="listing-price">₱ <?php echo number_format((float)($car['asking_price'] ?? 0)); ?></div>
+                        <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    </div>
+                </div>
 
-                <form method="POST" style="display:inline;">
-                    <input type="hidden" name="action" value="reject">
-                    <input type="hidden" name="listing_id" value="<?php echo $car['id']; ?>">
-                    <button type="submit" class="btn-reject">Reject</button>
-                </form>
-              </div>
-            </td>
-          </tr>
-          <?php endforeach; ?>
-          <?php if(empty($listings)): ?>
-          <tr><td colspan="5" style="text-align:center; padding: 40px; color: #6b7280;">No pending listings to review. You're all caught up!</td></tr>
-          <?php endif; ?>
-        </tbody>
-      </table>
-    </div>
-  </div>
+                <div class="listing-body">
+                    <!-- Core Specs -->
+                    <div class="info-group">
+                        <div class="info-label">Mileage</div>
+                        <div class="info-value"><?php echo number_format((float)($car['mileage'] ?? 0)); ?> km</div>
+                    </div>
+                    <div class="info-group">
+                        <div class="info-label">Transmission / Fuel</div>
+                        <div class="info-value"><?php echo htmlspecialchars(($car['transmission'] ?? 'N/A') . ' / ' . ($car['fuel_type'] ?? 'N/A')); ?></div>
+                    </div>
+                    <div class="info-group">
+                        <div class="info-label">Color</div>
+                        <div class="info-value"><?php echo htmlspecialchars($car['color'] ?? 'N/A'); ?></div>
+                    </div>
+                    <div class="info-group">
+                        <div class="info-label">Modifications</div>
+                        <div class="info-value"><?php echo htmlspecialchars($car['modifications'] ?? 'N/A'); ?></div>
+                    </div>
+
+                    <div class="section-divider"></div>
+
+                    <!-- Condition & History -->
+                    <div class="info-group">
+                        <div class="info-label">Condition / History</div>
+                        <div class="info-value"><?php echo htmlspecialchars($car['maintenance_history'] ?? 'N/A'); ?></div>
+                    </div>
+                    <div class="info-group">
+                        <div class="info-label">Accidents</div>
+                        <div class="info-value">
+                            <?php if(($car['accident_history'] ?? 'None') === 'None'): ?>
+                                <span class="status-badge status-yes">None</span>
+                            <?php else: ?>
+                                <span class="status-badge status-no"><?php echo htmlspecialchars($car['accident_history'] ?? 'N/A'); ?></span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="info-group">
+                        <div class="info-label">First Owner</div>
+                        <div class="info-value"><?php echo ($car['first_owner'] ?? 'No') === 'Yes' ? '<span class="status-badge status-yes">Yes</span>' : 'No'; ?></div>
+                    </div>
+                    <div class="info-group">
+                        <div class="info-label">Flooded</div>
+                        <div class="info-value"><?php echo ($car['flooded'] ?? 'No') === 'Yes' ? '<span class="status-badge status-no">Yes</span>' : '<span class="status-badge status-yes">No</span>'; ?></div>
+                    </div>
+
+                    <div class="section-divider"></div>
+
+                    <!-- Legal Documents -->
+                    <div class="info-group">
+                        <div class="info-label">LTO Status</div>
+                        <div class="info-value"><?php echo htmlspecialchars($car['registration_status'] ?? 'N/A'); ?></div>
+                    </div>
+                    <div class="info-group">
+                        <div class="info-label">OR/CR Ready</div>
+                        <div class="info-value"><?php echo ($car['or_cr_ready'] ?? 'Yes') === 'Yes' ? '<span class="status-badge status-yes">Yes</span>' : '<span class="status-badge status-no">No</span>'; ?></div>
+                    </div>
+                    <div class="info-group">
+                        <div class="info-label">Fully Paid</div>
+                        <div class="info-value"><?php echo ($car['fully_paid'] ?? 'Yes') === 'Yes' ? '<span class="status-badge status-yes">Yes</span>' : '<span class="status-badge status-no">No</span>'; ?></div>
+                    </div>
+                    <div class="info-group">
+                        <div class="info-label">Deed of Sale</div>
+                        <div class="info-value"><?php echo ($car['deed_of_sale_ready'] ?? 'Yes') === 'Yes' ? '<span class="status-badge status-yes">Ready</span>' : '<span class="status-badge status-no">Pending</span>'; ?></div>
+                    </div>
+
+                    <div class="section-divider"></div>
+
+                    <!-- Financial & Seller Info -->
+                    <div class="info-group">
+                        <div class="info-label">Payment Methods</div>
+                        <div class="info-value"><?php echo htmlspecialchars($car['payment_methods'] ?? 'Cash'); ?></div>
+                    </div>
+                    <div class="info-group">
+                        <div class="info-label">Negotiable / Trade-in</div>
+                        <div class="info-value"><?php echo htmlspecialchars($car['price_negotiability'] ?? 'N/A'); ?> | Trade-in: <?php echo htmlspecialchars($car['trade_in'] ?? 'No'); ?></div>
+                    </div>
+                    <div class="info-group" style="grid-column: span 2;">
+                        <div class="info-label">Seller Contact & Location</div>
+                        <div class="info-value">
+                            <strong><?php echo htmlspecialchars($car['seller_name'] ?? 'Not provided'); ?></strong> <br>
+                            <?php echo htmlspecialchars($car['seller_contact'] ?? 'N/A'); ?> <br>
+                            <?php echo htmlspecialchars($car['location'] ?? 'N/A'); ?>
+                        </div>
+                    </div>
+
+                    <!-- Image Gallery Section -->
+                    <div class="info-group" style="grid-column: span 4;">
+                        <div class="info-label">Vehicle Photos</div>
+                        <div class="photo-gallery">
+                            <?php 
+                            // Define the expected photo fields and their display labels
+                            $photo_fields = [
+                                'photo_front' => 'Front View',
+                                'photo_rear' => 'Rear View',
+                                'photo_side' => 'Side Profile',
+                                'photo_engine' => 'Engine Bay',
+                                'photo_interior' => 'Interior',
+                                'photo_dashboard' => 'Dashboard'
+                            ];
+                            
+                            $has_photos = false;
+                            
+                            foreach ($photo_fields as $field => $label) {
+                                // If the database column exists and isn't empty
+                                if (!empty($car[$field])) {
+                                    $has_photos = true;
+                                    // Make sure you created an 'uploads' folder in your main CaseStudy101 directory
+                                    $image_path = htmlspecialchars('../uploads/' . $car[$field]);
+                                    
+                                    echo "
+                                    <div class='photo-item'>
+                                        <a href='{$image_path}' target='_blank'>
+                                            <img src='{$image_path}' alt='{$label}'>
+                                        </a>
+                                        <div class='photo-item-label'>{$label}</div>
+                                    </div>";
+                                }
+                            }
+                            
+                            if (!$has_photos) {
+                                echo "<div class='info-value' style='color: #9ca3af; font-style: italic;'>No photos uploaded for this listing.</div>";
+                            }
+                            ?>
+                        </div>
+                    </div>
+
+                    <?php if(!empty($car['seller_notes'])): ?>
+                    <div class="info-group" style="grid-column: span 4; background: #f9fafb; padding: 12px; border-radius: 8px;">
+                        <div class="info-label">Seller Notes</div>
+                        <div class="info-value" style="font-style: italic;">"<?php echo htmlspecialchars($car['seller_notes']); ?>"</div>
+                    </div>
+                    <?php endif; ?>
+                </div>
+
+                <div class="listing-actions">
+                    <form method="POST" style="display:inline;">
+                        <input type="hidden" name="listing_id" value="<?php echo $car['id']; ?>">
+                        <input type="hidden" name="action" value="reject">
+                        <button type="submit" class="btn btn-reject" onclick="event.stopPropagation(); return confirm('Are you sure you want to reject this listing?');">Reject Listing</button>
+                    </form>
+                    
+                    <form method="POST" style="display:inline;">
+                        <input type="hidden" name="listing_id" value="<?php echo $car['id']; ?>">
+                        <input type="hidden" name="action" value="approve">
+                        <button type="submit" class="btn btn-approve" onclick="event.stopPropagation(); return confirm('Approve this listing? It will immediately appear in the dataset.');">Approve Listing</button>
+                    </form>
+                </div>
+            </div>
+        <?php endforeach; ?>
+
+    <?php endif; ?>
 </div>
 
-<!-- Modal Logic (Identical to manage_listings) -->
-<div class="modal-overlay" id="dataModal">
-    <div class="modal-content">
-        <button class="modal-close" onclick="closeModal()">×</button>
-        <div class="modal-title" id="m_title">Vehicle Details</div>
-        <div class="data-grid">
-            <div class="data-group price-highlight"><div class="data-lbl">Asking Price</div><div class="data-val" id="m_asking"></div></div>
-            <div class="data-group price-highlight"><div class="data-lbl">System Prediction</div><div class="data-val" id="m_predicted"></div></div>
-            <div class="data-group"><div class="data-lbl">Brand</div><div class="data-val" id="m_brand"></div></div>
-            <div class="data-group"><div class="data-lbl">Model</div><div class="data-val" id="m_model"></div></div>
-            <div class="data-group"><div class="data-lbl">Year</div><div class="data-val" id="m_year"></div></div>
-            <div class="data-group"><div class="data-lbl">Mileage</div><div class="data-val" id="m_mileage"></div></div>
-            <div class="data-group"><div class="data-lbl">Transmission</div><div class="data-val" id="m_trans"></div></div>
-            <div class="data-group"><div class="data-lbl">Fuel Type</div><div class="data-val" id="m_fuel"></div></div>
-            <div class="data-group"><div class="data-lbl">Color</div><div class="data-val" id="m_color"></div></div>
-            <div class="data-group"><div class="data-lbl">Location</div><div class="data-val" id="m_location"></div></div>
-        </div>
-        <h4 style="margin: 0 0 12px 0; color: #374151;">Condition & History</h4>
-        <div class="data-grid">
-            <div class="data-group"><div class="data-lbl">Maintenance</div><div class="data-val" id="m_maint"></div></div>
-            <div class="data-group"><div class="data-lbl">Accidents</div><div class="data-val" id="m_acc"></div></div>
-            <div class="data-group"><div class="data-lbl">Registration</div><div class="data-val" id="m_reg"></div></div>
-            <div class="data-group"><div class="data-lbl">Modifications</div><div class="data-val" id="m_mods"></div></div>
-        </div>
-        <h4 style="margin: 0 0 12px 0; color: #374151;">Listing Info</h4>
-        <div class="data-grid">
-            <div class="data-group"><div class="data-lbl">Source</div><div class="data-val" id="m_type"></div></div>
-            <div class="data-group"><div class="data-lbl">Seller Name</div><div class="data-val" id="m_seller"></div></div>
-            <div class="data-group" style="grid-column: span 2;"><div class="data-lbl">Contact / URL</div><div class="data-val" id="m_contact" style="word-wrap: break-word;"></div></div>
-        </div>
-    </div>
-</div>
+<?php 
 
-<script>
-function formatMoney(num) { if (!num || num == 0) return 'N/A'; return '₱' + Number(num).toLocaleString(); }
-function openModal(car) {
-    document.getElementById('m_title').innerText = car.year_manufactured + ' ' + car.brand + ' ' + car.model;
-    document.getElementById('m_asking').innerText = formatMoney(car.asking_price);
-    document.getElementById('m_predicted').innerText = formatMoney(car.predicted_value);
-    document.getElementById('m_brand').innerText = car.brand;
-    document.getElementById('m_model').innerText = car.model;
-    document.getElementById('m_year').innerText = car.year_manufactured;
-    document.getElementById('m_mileage').innerText = Number(car.mileage).toLocaleString() + ' km';
-    document.getElementById('m_trans').innerText = car.transmission || 'N/A';
-    document.getElementById('m_fuel').innerText = car.fuel_type || 'N/A';
-    document.getElementById('m_color').innerText = car.color || 'N/A';
-    document.getElementById('m_location').innerText = car.location || 'N/A';
-    document.getElementById('m_maint').innerText = car.maintenance_history || 'N/A';
-    document.getElementById('m_acc').innerText = car.accident_history || 'N/A';
-    document.getElementById('m_reg').innerText = car.registration_status || 'N/A';
-    document.getElementById('m_mods').innerText = car.modifications || 'N/A';
-    document.getElementById('m_type').innerText = car.listing_type.toUpperCase();
-    document.getElementById('m_seller').innerText = car.seller_name || 'N/A';
-    document.getElementById('m_contact').innerText = car.seller_contact || 'N/A';
-    document.getElementById('dataModal').classList.add('active');
-}
-function closeModal() { document.getElementById('dataModal').classList.remove('active'); }
-window.onclick = function(event) { if (event.target == document.getElementById('dataModal')) closeModal(); }
-</script>
-
-<?php include '../footer.php'; ?>
+?>
