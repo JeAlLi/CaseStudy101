@@ -33,10 +33,14 @@
       <a href="predict.php" class="nav-item <?php echo ($current_page == 'predict') ? 'active' : ''; ?>">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
         Predict Price
-        <a href="submit_listing.php" class="nav-item <?php echo ($current_page == 'submit_listing') ? 'active' : ''; ?>">
+      </a>
+      <a href="browse.php" class="nav-item <?php echo ($current_page == 'browse') ? 'active' : ''; ?>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+        Browse Cars
+      </a>
+      <a href="submit_listing.php" class="nav-item <?php echo ($current_page == 'submit_listing') ? 'active' : ''; ?>">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
         Sell Your Car
-      </a>
       </a>
     </div>
 
