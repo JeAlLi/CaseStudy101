@@ -2,9 +2,11 @@
 require_once 'db.php';
 $current_page = 'browse';
 
-$f_model = trim($_GET['model'] ?? '');
-$f_min   = trim($_GET['min_price'] ?? '');
-$f_max   = trim($_GET['max_price'] ?? '');
+$f_model    = trim($_GET['model'] ?? '');
+$f_min      = trim($_GET['min_price'] ?? '');
+$f_max      = trim($_GET['max_price'] ?? '');
+$f_sort     = trim($_GET['sort'] ?? 'newest');
+$f_verified = trim($_GET['verified'] ?? 'all'); // NEW
 
 $where  = ["status = 'approved'", "listing_type = 'user_sale'"];
 $params = [];
@@ -13,26 +15,28 @@ if ($f_model !== '') { $where[] = "model = ?";           $params[] = $f_model; }
 if ($f_min !== '' && is_numeric($f_min)) { $where[] = "asking_price >= ?"; $params[] = (float)$f_min; }
 if ($f_max !== '' && is_numeric($f_max)) { $where[] = "asking_price <= ?"; $params[] = (float)$f_max; }
 
-$sql = "SELECT * FROM vehicle_listings WHERE " . implode(' AND ', $where) . " ORDER BY date_added DESC";
+// NEW: Verification Filter
+if ($f_verified === 'verified') { $where[] = "verification_status = 'mechanic_verified'"; }
+if ($f_verified === 'unverified') { $where[] = "verification_status = 'unverified'"; }
+
+$orderBy = "date_added DESC";
+if ($f_sort === 'price_asc')  $orderBy = "asking_price ASC";
+if ($f_sort === 'price_desc') $orderBy = "asking_price DESC";
+if ($f_sort === 'mileage')    $orderBy = "mileage ASC";
+
+$sql = "SELECT * FROM vehicle_listings WHERE " . implode(' AND ', $where) . " ORDER BY $orderBy";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $listings = $stmt->fetchAll();
 
 function risk_badge(int $score, string $level): string {
     $colors = [
-        'Low'    => ['bg'=>'#ecfdf5', 'fg'=>'#059669', 'border' => '#a7f3d0', 'icon'=>'✓'],
-        'Medium' => ['bg'=>'#fffbeb', 'fg'=>'#d97706', 'border' => '#fde68a', 'icon'=>'⚠'],
-        'High'   => ['bg'=>'#fef2f2', 'fg'=>'#dc2626', 'border' => '#fecaca', 'icon'=>'✕'],
+        'Low'    => ['bg'=>'var(--teal-soft)', 'fg'=>'var(--teal)', 'border' => 'var(--teal)', 'icon'=>'✓'],
+        'Medium' => ['bg'=>'var(--amber-soft)', 'fg'=>'var(--amber)', 'border' => 'var(--amber)', 'icon'=>'⚠'],
+        'High'   => ['bg'=>'var(--coral-soft)', 'fg'=>'var(--coral)', 'border' => 'var(--coral)', 'icon'=>'✕'],
     ];
-    $c = $colors[$level] ?? ['bg'=>'#f3f4f6', 'fg'=>'#374151', 'border' => '#e5e7eb', 'icon'=>'?'];
-    $safeLevel = htmlspecialchars($level);
-    $safeScore = (int)$score;
-    return '<span class="risk-badge" '
-         . 'style="background:' . $c['bg'] . '; color:' . $c['fg'] . '; border: 1px solid ' . $c['border'] . ';" '
-         . 'data-level="' . $safeLevel . '" '
-         . 'data-score="' . $safeScore . '">'
-         . $c['icon'] . ' Risk Score: ' . $safeLevel
-         . '</span>';
+    $c = $colors[$level] ?? ['bg'=>'var(--surface-hover)', 'fg'=>'var(--text-muted)', 'border' => 'var(--border)', 'icon'=>'?'];
+    return '<span class="risk-badge" data-level="'.htmlspecialchars($level).'" data-score="'.(int)$score.'" style="background:'.$c['bg'].'; color:'.$c['fg'].'; border: 1px solid '.$c['border'].';">'.$c['icon'].' Risk Score: '.htmlspecialchars($level).'</span>';
 }
 
 include 'header.php';
@@ -40,80 +44,73 @@ include 'header.php';
 
 <style>
     .marketplace-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
-    .marketplace-title { font-family: var(--font-display); font-size: 28px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px; margin: 0; }
-    .marketplace-sub { font-size: 14px; color: #64748b; margin-top: 4px; }
+    .marketplace-title { font-family: var(--font-display); font-size: 32px; font-weight: 800; color: var(--text); letter-spacing: -0.5px; margin: 0; }
+    .marketplace-sub { font-size: 15px; color: var(--text-muted); margin-top: 4px; }
     
-    .search-bar-container { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin-bottom: 32px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-    .search-select, .search-input { padding: 12px 16px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; font-family: var(--font-body); color: #0f172a; background: #f8fafc; outline: none; transition: border-color 0.2s; }
-    .search-select:focus, .search-input:focus { border-color: #2563eb; background: #ffffff; }
-    .search-btn { padding: 12px 24px; background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; transition: background 0.2s; }
-    .search-btn:hover { background: #1d4ed8; }
+    .search-bar-container { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 32px; box-shadow: var(--shadow-sm); display: flex; gap: 12px; flex-wrap: wrap; align-items: center; transition: var(--transition); }
+    .search-select, .search-input { padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: var(--font-body); color: var(--text); background: var(--paper); outline: none; transition: var(--transition); }
+    .search-select:focus, .search-input:focus { border-color: var(--blue); background: var(--surface); box-shadow: 0 0 0 3px var(--blue-soft); }
+    .search-btn { padding: 12px 24px; background: var(--blue); color: white; border: none; border-radius: 8px; font-weight: 700; font-size: 14px; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 12px rgba(37,99,235,0.2); }
+    .search-btn:hover { background: var(--blue-dark); box-shadow: var(--shadow-glow); }
 
     .listings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 24px; }
     
-    .car-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; display: flex; flex-direction: column; position: relative; }
-    .car-card:hover { transform: translateY(-4px); box-shadow: 0 12px 24px -8px rgba(0,0,0,0.15); border-color: #cbd5e1; }
-    .car-card::before {
-        content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
-        background: linear-gradient(90deg, #6366f1, #2563eb);
-        z-index: 3; pointer-events: none; border-radius: 16px 16px 0 0; opacity: 0.85;
-    }
-    .car-card.card-verified::before { background: linear-gradient(90deg, #10b981, #059669); }
+    .car-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; cursor: pointer; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1); display: flex; flex-direction: column; position: relative; }
+    .car-card:hover { transform: translateY(-6px); box-shadow: var(--shadow-lg); border-color: var(--border-hover); }
     
-    .car-image-box { position: relative; width: 100%; height: 220px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-    .car-image-box img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.4s ease; }
-    .car-card:hover .car-image-box img { transform: scale(1.05); }
+    .car-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: rgba(37, 99, 235, 0.5); z-index: 10; pointer-events: none; }
+    .car-card.card-verified::before { background: rgba(16, 185, 129, 0.7); }
     
-    .car-placeholder { background-color: #f1f5f9; background-image: radial-gradient(#cbd5e1 1px, transparent 1px); background-size: 20px 20px; }
-    .placeholder-content { display: flex; flex-direction: column; align-items: center; justify-content: center; color: #94a3b8; gap: 8px; z-index: 2; }
-    .placeholder-content svg { width: 48px; height: 48px; opacity: 0.7; }
-    .placeholder-content span { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-
-    .image-overlay { position: absolute; inset: 0; background: linear-gradient(to top, rgba(15,23,42,0.8) 0%, transparent 40%); pointer-events: none; }
+    .car-image-box { position: relative; width: 100%; height: 220px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--paper); }
+    .car-image-box img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.5s ease; }
+    .car-card:hover .car-image-box img { transform: scale(1.08); }
     
-    .price-tag { position: absolute; bottom: 16px; right: 16px; background: #ffffff; color: #0f172a; font-family: var(--font-display); font-size: 20px; font-weight: 800; padding: 8px 16px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 2; letter-spacing: -0.5px; }
-    .save-btn { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; background: #ffffff; border-radius: 50%; display: flex; align-items: center; justify-content: center; z-index: 2; color: #64748b; transition: 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    .save-btn:hover { color: #ef4444; transform: scale(1.1); }
+    .car-placeholder { background-color: var(--surface-hover); background-image: radial-gradient(var(--border-hover) 1.5px, transparent 1.5px); background-size: 24px 24px; border-bottom: 1px solid var(--border); }
+    .placeholder-content { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-muted); gap: 8px; z-index: 2; }
+    .placeholder-content svg { width: 48px; height: 48px; opacity: 0.6; }
+    .placeholder-content span { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: var(--text-faint); }
+    
+    .price-tag { position: absolute; bottom: 16px; right: 16px; background: var(--surface); color: var(--text); font-family: var(--font-display); font-size: 20px; font-weight: 800; padding: 8px 16px; border-radius: 8px; box-shadow: var(--shadow-md); z-index: 2; letter-spacing: -0.5px; border: 1px solid var(--border); }
+    .save-btn { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; background: var(--surface); border-radius: 50%; display: flex; align-items: center; justify-content: center; z-index: 2; color: var(--text-muted); transition: 0.2s; box-shadow: var(--shadow-sm); }
+    .save-btn:hover { color: var(--coral); transform: scale(1.1); }
     
     .car-content { padding: 20px; display: flex; flex-direction: column; flex: 1; }
-    .car-title { font-family: var(--font-display); font-size: 20px; font-weight: 800; color: #0f172a; line-height: 1.2; margin: 0 0 4px 0; }
-    .car-subtitle { font-size: 13px; color: #64748b; font-weight: 500; margin-bottom: 16px; }
+    .car-title { font-family: var(--font-display); font-size: 20px; font-weight: 800; color: var(--text); line-height: 1.2; margin: 0 0 4px 0; }
+    .car-subtitle { font-size: 13px; color: var(--text-muted); font-weight: 500; margin-bottom: 16px; }
     
     .spec-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-    .spec-pill { background: #f8fafc; color: #334155; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 8px; display: flex; align-items: center; gap: 6px; border: 1px solid #e2e8f0; }
-    .spec-pill svg { width: 14px; height: 14px; color: #94a3b8; }
+    .spec-pill { background: var(--paper); color: var(--text); font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 8px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--border); }
+    .spec-pill svg { width: 14px; height: 14px; color: var(--text-muted); }
     
     .badge-row { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-    
     .verify-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: 6px; letter-spacing: 0.02em; cursor: pointer; user-select: none; transition: transform 0.12s; }
     .verify-badge:hover { transform: translateY(-1px); }
-    .verify-badge.pinned { outline: 2px solid #2563eb; outline-offset: 2px; }
-    .vb-verified { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
-    .vb-unverified { background: #ffffff; color: #64748b; border: 1px solid #cbd5e1; }
+    .vb-verified { background: var(--teal-soft); color: var(--teal); border: 1px solid var(--teal); }
+    .vb-unverified { background: var(--paper); color: var(--text-muted); border: 1px solid var(--border); }
     .verify-badge svg { width: 14px; height: 14px; }
 
     .risk-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: 6px; letter-spacing: 0.02em; cursor: pointer; user-select: none; transition: transform 0.12s; }
     .risk-badge:hover { transform: translateY(-1px); }
-    .risk-badge.pinned { outline: 2px solid #2563eb; outline-offset: 2px; }
 
-    .car-footer { margin-top: auto; border-top: 1px dashed #e2e8f0; padding-top: 16px; display: flex; justify-content: space-between; align-items: center; }
-    .car-location { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #64748b; font-weight: 500; max-width: 60%; }
-    .car-location svg { width: 15px; height: 15px; color: #94a3b8; flex-shrink: 0; }
-    .view-btn { background: #f8fafc; color: #2563eb; border: 1px solid #e2e8f0; padding: 8px 16px; border-radius: 8px; font-size: 12.5px; font-weight: 700; transition: 0.2s; display: flex; align-items: center; gap: 6px; cursor: pointer; }
-    .car-card:hover .view-btn { background: #2563eb; color: #ffffff; border-color: #2563eb; }
+    .car-footer { margin-top: auto; border-top: 1px dashed var(--border); padding-top: 16px; display: flex; justify-content: space-between; align-items: center; }
+    .car-location { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-muted); font-weight: 600; max-width: 60%; }
+    .car-location svg { width: 15px; height: 15px; color: var(--text-faint); flex-shrink: 0; }
+    
+    .view-btn { background: var(--paper); color: var(--blue); border: 1px solid var(--border); padding: 8px 16px; border-radius: 8px; font-size: 12.5px; font-weight: 700; transition: 0.2s; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .car-card:hover .view-btn { background: var(--blue); color: #fff; border-color: var(--blue); }
 
-    /* TOOLTIPS */
-    #info-tooltip-global { position: fixed; background: #0f172a; color: #fff; border-radius: 12px; padding: 16px; width: 320px; z-index: 99999; box-shadow: 0 12px 36px rgba(0,0,0,0.3); opacity: 0; visibility: hidden; transition: opacity 0.15s, visibility 0.15s; pointer-events: none; }
+    /* TOOLTIPS & MODALS */
+    #info-tooltip-global { position: fixed; background: var(--ink); color: #fff; border-radius: 12px; padding: 16px; width: 320px; z-index: 99999; box-shadow: var(--shadow-lg); opacity: 0; visibility: hidden; transition: opacity 0.15s, visibility 0.15s; pointer-events: none; }
     #info-tooltip-global.show { opacity: 1; visibility: visible; }
-    .tt-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #334155; }
-    .tt-current { padding: 10px 12px; background: rgba(255,255,255,0.05); border-radius: 8px; margin-bottom: 10px; font-size: 12.5px; color: #e2e8f0; line-height: 1.5; display: none; }
+    .tt-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint); margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+    .tt-current { padding: 10px 12px; background: var(--ink-soft); border-radius: 8px; margin-bottom: 10px; font-size: 12.5px; color: #fff; line-height: 1.5; display: none; }
     .tt-row { display: grid; grid-template-columns: 62px 68px 1fr; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 6px; margin-bottom: 4px; font-size: 12px; line-height: 1.3; border-left: 3px solid transparent; transition: background 0.15s, border-color 0.15s; }
     .tt-range { font-family: var(--font-mono); font-weight: 600; color: #cbd5e1; }
     .tt-tier { font-weight: 700; padding: 3px 8px; border-radius: 10px; text-align: center; font-size: 11px; }
-    .tt-low { background: #ecfdf5; color: #047857; }
-    .tt-med { background: #fffbeb; color: #d97706; }
-    .tt-high { background: #fef2f2; color: #dc2626; }
-    .tt-desc { color: #94a3b8; font-size: 11px; }
+    .tt-low { background: var(--teal-soft); color: var(--teal); }
+    .tt-med { background: var(--amber-soft); color: var(--amber); }
+    .tt-high { background: var(--coral-soft); color: var(--coral); }
+    .tt-desc { color: var(--text-faint); font-size: 11px; }
     .tt-row.tt-active { font-weight: 700; }
     .tt-row.tt-active .tt-range { color: #ffffff; }
     .tt-row.tt-active .tt-desc { color: #e2e8f0; }
@@ -121,53 +118,51 @@ include 'header.php';
     .tt-row[data-tier="Medium"].tt-active { background: rgba(234, 179, 8, 0.2); border-left-color: #eab308; }
     .tt-row[data-tier="High"].tt-active { background: rgba(239, 68, 68, 0.2); border-left-color: #ef4444; }
 
-    /* MODAL */
     .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center; padding: 20px; }
     .modal-overlay.show { display: flex; }
-    .modal-content { background: #fff; border-radius: 16px; max-width: 900px; width: 100%; max-height: 92vh; overflow-y: auto; position: relative; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }
-    .modal-close { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.95); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 22px; color: #64748b; z-index: 20; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
-    .modal-close:hover { background: #fff; color: #0f172a; }
+    .modal-content { background: var(--surface); border-radius: 16px; max-width: 900px; width: 100%; max-height: 92vh; overflow-y: auto; position: relative; box-shadow: var(--shadow-lg); }
+    .modal-close { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--text-muted); z-index: 20; box-shadow: var(--shadow-sm); transition: 0.2s; }
+    .modal-close:hover { background: var(--paper); color: var(--text); }
 
-    .modal-hero { height: 320px; border-radius: 16px 16px 0 0; overflow: hidden; position: relative; }
+    .modal-hero { height: 320px; border-radius: 16px 16px 0 0; overflow: hidden; position: relative; border-bottom: 1px solid var(--border); }
     .modal-hero img { width: 100%; height: 100%; object-fit: cover; }
     .modal-thumb-strip { display: flex; gap: 8px; padding: 12px 32px 0; overflow-x: auto; }
     .modal-thumb { width: 64px; height: 64px; border-radius: 6px; object-fit: cover; cursor: pointer; border: 2px solid transparent; flex-shrink: 0; transition: border-color 0.15s, opacity 0.15s; opacity: 0.7; }
     .modal-thumb:hover { opacity: 1; }
-    .modal-thumb.active { border-color: #2563eb; opacity: 1; }
+    .modal-thumb.active { border-color: var(--blue); opacity: 1; }
     
     .modal-body { padding: 24px 32px 32px; }
-    
     .modal-title-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
-    .modal-title { font-family: var(--font-display); font-size: 26px; font-weight: 800; margin-bottom: 6px; color: #0f172a; }
-    .modal-subtitle { font-size: 14px; color: #64748b; font-weight: 500; }
+    .modal-title { font-family: var(--font-display); font-size: 26px; font-weight: 800; margin-bottom: 6px; color: var(--text); }
+    .modal-subtitle { font-size: 14px; color: var(--text-muted); font-weight: 500; }
     .modal-price-box { text-align: right; }
-    .modal-price-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 4px; font-weight: 700; }
-    .modal-price { font-size: 30px; font-weight: 800; color: #2563eb; font-family: var(--font-display); letter-spacing: -0.5px; }
-    .modal-price-meta { font-size: 12px; color: #64748b; margin-top: 2px; }
+    .modal-price-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); margin-bottom: 4px; font-weight: 700; }
+    .modal-price { font-size: 32px; font-weight: 800; color: var(--blue); font-family: var(--font-display); letter-spacing: -0.5px; }
+    .modal-price-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 
-    .risk-panel { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; }
+    .risk-panel { background: var(--paper); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; }
     .risk-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-    .risk-panel-title { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #0f172a; }
-    .flag-item { font-size: 12.5px; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px; background: #fff; border-left: 3px solid #f59e0b; color: #334155; line-height: 1.5; }
+    .risk-panel-title { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text); }
+    .flag-item { font-size: 12.5px; padding: 10px 14px; margin-bottom: 8px; border-radius: 6px; background: var(--surface); border-left: 3px solid var(--amber); color: var(--text); line-height: 1.5; box-shadow: var(--shadow-sm); }
     .flag-item:last-child { margin-bottom: 0; }
 
-    .modal-section-title { font-size: 13px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.06em; margin: 22px 0 12px; padding-top: 18px; border-top: 1px solid #e2e8f0; }
+    .modal-section-title { font-size: 13px; font-weight: 800; color: var(--text); text-transform: uppercase; letter-spacing: 0.06em; margin: 22px 0 12px; padding-top: 18px; border-top: 1px solid var(--border); }
     .modal-section-title:first-of-type { margin-top: 0; padding-top: 0; border-top: none; }
 
     .modal-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
     .modal-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
     .modal-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 
-    .info-box { background: #f8fafc; padding: 12px 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
-    .info-box .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; font-weight: 700; margin-bottom: 4px; }
-    .info-box .val { font-size: 13.5px; font-weight: 600; color: #0f172a; line-height: 1.4; }
+    .info-box { background: var(--paper); padding: 12px 14px; border-radius: 8px; border: 1px solid var(--border); }
+    .info-box .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 700; margin-bottom: 4px; }
+    .info-box .val { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.4; }
 
-    .pill-yes { display: inline-flex; align-items: center; gap: 4px; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; }
-    .pill-no { display: inline-flex; align-items: center; gap: 4px; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; }
-    .pill-neutral { display: inline-flex; align-items: center; gap: 4px; background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; }
+    .pill-yes { display: inline-flex; align-items: center; gap: 4px; background: var(--teal-soft); color: var(--teal); border: 1px solid var(--teal); padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; }
+    .pill-no { display: inline-flex; align-items: center; gap: 4px; background: var(--coral-soft); color: var(--coral); border: 1px solid var(--coral); padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; }
+    .pill-neutral { display: inline-flex; align-items: center; gap: 4px; background: var(--surface-hover); color: var(--text-muted); border: 1px solid var(--border); padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; }
 
-    .notes-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; font-size: 13.5px; color: #334155; line-height: 1.6; margin-bottom: 10px; }
-    .notes-box .notes-lbl { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; font-weight: 700; margin-bottom: 4px; }
+    .notes-box { background: var(--paper); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; font-size: 13.5px; color: var(--text); line-height: 1.6; margin-bottom: 10px; }
+    .notes-box .notes-lbl { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 700; margin-bottom: 4px; }
 
     @media (max-width: 640px) { 
         .marketplace-header { flex-direction: column; align-items: flex-start; }
@@ -182,7 +177,7 @@ include 'header.php';
     }
 </style>
 
-<div class="view" style="display: block; width: 100%; max-width: 1400px; margin: 0 auto;">
+<div class="view">
   
   <div class="marketplace-header">
     <div>
@@ -201,21 +196,37 @@ include 'header.php';
       <option value="Wigo" <?php echo $f_model === 'Wigo' ? 'selected' : ''; ?>>Wigo</option>
       <option value="Avanza" <?php echo $f_model === 'Avanza' ? 'selected' : ''; ?>>Avanza</option>
     </select>
-    <input type="number" name="min_price" placeholder="Min Price (₱)" value="<?php echo htmlspecialchars($f_min); ?>" class="search-input" style="width: 150px;">
-    <input type="number" name="max_price" placeholder="Max Price (₱)" value="<?php echo htmlspecialchars($f_max); ?>" class="search-input" style="width: 150px;">
+    
+    <!-- NEW VERIFICATION FILTER -->
+    <select name="verified" class="search-select" style="width: 160px;">
+      <option value="all" <?php echo $f_verified === 'all' ? 'selected' : ''; ?>>All Status</option>
+      <option value="verified" <?php echo $f_verified === 'verified' ? 'selected' : ''; ?>>Verified Only</option>
+      <option value="unverified" <?php echo $f_verified === 'unverified' ? 'selected' : ''; ?>>Unverified Only</option>
+    </select>
+
+    <input type="number" name="min_price" placeholder="Min Price (₱)" value="<?php echo htmlspecialchars($f_min); ?>" class="search-input" style="width: 140px;">
+    <input type="number" name="max_price" placeholder="Max Price (₱)" value="<?php echo htmlspecialchars($f_max); ?>" class="search-input" style="width: 140px;">
+    
+    <select name="sort" class="search-select" style="width: 150px;">
+      <option value="newest" <?php echo $f_sort === 'newest' ? 'selected' : ''; ?>>Newest First</option>
+      <option value="price_asc" <?php echo $f_sort === 'price_asc' ? 'selected' : ''; ?>>Price: Low to High</option>
+      <option value="price_desc" <?php echo $f_sort === 'price_desc' ? 'selected' : ''; ?>>Price: High to Low</option>
+      <option value="mileage" <?php echo $f_sort === 'mileage' ? 'selected' : ''; ?>>Lowest Mileage</option>
+    </select>
+
     <button type="submit" class="search-btn">Search</button>
-    <?php if ($f_model || $f_min || $f_max): ?>
-      <a href="browse.php" style="font-size: 13px; color: #64748b; text-decoration: underline; margin-left: 8px;">Clear Filters</a>
+    <?php if ($f_model || $f_min || $f_max || $f_sort !== 'newest' || $f_verified !== 'all'): ?>
+      <a href="browse.php" style="font-size: 13px; color: var(--text-muted); text-decoration: underline; margin-left: 8px; font-weight: 600;">Clear Filters</a>
     <?php endif; ?>
   </form>
 
   <div class="listings-grid">
     <?php if (empty($listings)): ?>
-      <div style="grid-column: 1 / -1; text-align: center; padding: 80px 20px; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" style="width:64px;height:64px;margin-bottom:16px;"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-        <h4 style="color: #0f172a; margin-bottom: 8px; font-size: 18px;">No vehicles found</h4>
-        <p style="margin-bottom: 24px; color: #64748b;">Try adjusting your search filters.</p>
-        <a href="browse.php" style="background: #2563eb; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600;">Clear Search</a>
+      <div style="grid-column: 1 / -1; text-align: center; padding: 80px 20px; background: var(--surface); border-radius: 16px; border: 1px solid var(--border);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.5" style="width:64px;height:64px;margin-bottom:16px;"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+        <h4 style="color: var(--text); margin-bottom: 8px; font-size: 18px;">No vehicles found</h4>
+        <p style="margin-bottom: 24px; color: var(--text-muted);">Try adjusting your search filters.</p>
+        <a href="browse.php" style="background: var(--blue); color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600;">Clear Search</a>
       </div>
     <?php else: foreach ($listings as $idx => $row): 
         $has_photo = !empty($row['photo_front']);
@@ -224,18 +235,16 @@ include 'header.php';
       <div class="car-card <?php echo (($row['verification_status'] ?? '') === 'mechanic_verified') ? 'card-verified' : ''; ?>" onclick="openListingModal(<?php echo $idx; ?>)">
         
         <div class="car-image-box <?php echo !$has_photo ? 'car-placeholder' : ''; ?>">
-          
           <?php if ($has_photo): ?>
             <img src="<?php echo $img_src; ?>" alt="<?php echo htmlspecialchars($row['brand'] . ' ' . $row['model']); ?>">
           <?php else: ?>
             <div class="placeholder-content">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12l1.5-5A2 2 0 016.4 5.5h11.2A2 2 0 0119.5 7L21 12M3 12v5a1 1 0 001 1h1a1 1 0 001-1v-1h12v1a1 1 0 001 1h1a1 1 0 001-1v-5M3 12h18M6.5 15.5h.01M17.5 15.5h.01"/></svg>
-              <span>Photos Pending</span>
+              <span>Photos Unavailable</span>
             </div>
           <?php endif; ?>
-
-          <div class="image-overlay"></div>
           <div class="price-tag">₱<?php echo number_format($row['asking_price']); ?></div>
+          
           <div class="save-btn" onclick="event.stopPropagation();">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
           </div>
@@ -291,12 +300,11 @@ include 'header.php';
   </div>
 </div>
 
-<!-- Tooltip -->
+<!-- KEEP ALL YOUR EXISTING MODAL HTML AND JS BELOW THIS LINE -->
 <div id="info-tooltip-global" role="tooltip">
   <div id="tt-content"></div>
 </div>
 
-<!-- Modal -->
 <div class="modal-overlay" id="listingModal" onclick="if(event.target===this)closeModal()">
   <div class="modal-content">
     <button class="modal-close" onclick="closeModal()">×</button>
@@ -305,7 +313,7 @@ include 'header.php';
         <img id="m-img" src="" style="display: none;">
         <div id="m-placeholder" class="placeholder-content" style="display: none;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12l1.5-5A2 2 0 016.4 5.5h11.2A2 2 0 0119.5 7L21 12M3 12v5a1 1 0 001 1h1a1 1 0 001-1v-1h12v1a1 1 0 001 1h1a1 1 0 001-1v-5M3 12h18M6.5 15.5h.01M17.5 15.5h.01"/></svg>
-            <span>Photos Pending</span>
+            <span>Photos Unavailable</span>
         </div>
     </div>
     
@@ -332,7 +340,6 @@ include 'header.php';
         <div id="m-risk-flags"></div>
       </div>
 
-      <!-- SPECIFICATIONS -->
       <div class="modal-section-title">Specifications</div>
       <div class="modal-grid-3">
         <div class="info-box"><div class="lbl">Year</div><div class="val" id="m-year"></div></div>
@@ -343,7 +350,6 @@ include 'header.php';
         <div class="info-box"><div class="lbl">Modifications</div><div class="val" id="m-mods"></div></div>
       </div>
 
-      <!-- CONDITION & HISTORY -->
       <div class="modal-section-title">Condition &amp; History</div>
       <div class="modal-grid-4">
         <div class="info-box"><div class="lbl">First Owner</div><div class="val" id="m-first-owner"></div></div>
@@ -352,7 +358,6 @@ include 'header.php';
         <div class="info-box"><div class="lbl">Flooded</div><div class="val" id="m-flooded"></div></div>
       </div>
 
-      <!-- LEGAL DOCUMENTS -->
       <div class="modal-section-title">Legal Documents</div>
       <div class="modal-grid-4">
         <div class="info-box"><div class="lbl">LTO Status</div><div class="val" id="m-lto"></div></div>
@@ -361,7 +366,6 @@ include 'header.php';
         <div class="info-box"><div class="lbl">Deed of Sale</div><div class="val" id="m-deed"></div></div>
       </div>
 
-      <!-- PRICING & PAYMENT -->
       <div class="modal-section-title">Pricing &amp; Payment</div>
       <div class="modal-grid-3">
         <div class="info-box"><div class="lbl">Negotiability</div><div class="val" id="m-nego"></div></div>
@@ -372,7 +376,6 @@ include 'header.php';
         <div class="info-box" style="grid-column: span 2;"><div class="lbl">Accepted Payment Methods</div><div class="val" id="m-payment"></div></div>
       </div>
 
-      <!-- LOCATION -->
       <div class="modal-section-title">Location</div>
       <div class="modal-grid">
         <div class="info-box"><div class="lbl">City / Municipality</div><div class="val" id="m-city"></div></div>
@@ -380,14 +383,12 @@ include 'header.php';
       </div>
       <div class="info-box" style="margin-top:12px;"><div class="lbl">Full Address</div><div class="val" id="m-location"></div></div>
 
-      <!-- SELLER -->
       <div class="modal-section-title">Seller Contact</div>
       <div class="modal-grid">
         <div class="info-box"><div class="lbl">Name</div><div class="val" id="m-seller"></div></div>
-        <div class="info-box"><div class="lbl">Contact Number</div><div class="val" id="m-contact" style="font-family: var(--font-mono); color: #2563eb;"></div></div>
+        <div class="info-box"><div class="lbl">Contact Number</div><div class="val" id="m-contact" style="font-family: var(--font-mono); color: var(--blue);"></div></div>
       </div>
 
-      <!-- NOTES (conditional) -->
       <div id="m-notes-section" style="display:none;">
         <div class="modal-section-title">Seller Notes</div>
         <div id="m-notes-wrap"></div>
@@ -402,7 +403,6 @@ const tooltip = document.getElementById('info-tooltip-global');
 const ttContent = document.getElementById('tt-content');
 let pinnedTarget = null;
 
-/* ============ HELPERS ============ */
 function yesNoPill(v) {
     const s = String(v ?? '').trim();
     if (/^(yes|true|1)$/i.test(s)) return '<span class="pill-yes">✓ Yes</span>';
@@ -420,17 +420,16 @@ function setHtml(id, html) {
     document.getElementById(id).innerHTML = html;
 }
 
-/* ============ TOOLTIPS ============ */
 function buildRiskTooltip(level, score) {
-    let bg = 'rgba(255,255,255,0.08)', fg = '#e2e8f0';
-    if (level === 'Low') { bg = 'rgba(34, 197, 94, 0.20)'; fg = '#4ade80'; }
-    if (level === 'Medium') { bg = 'rgba(234, 179, 8, 0.20)'; fg = '#fbbf24'; }
-    if (level === 'High') { bg = 'rgba(239, 68, 68, 0.20)'; fg = '#f87171'; }
+    let bg = 'var(--surface-hover)', fg = 'var(--text)';
+    if (level === 'Low') { bg = 'var(--teal-soft)'; fg = 'var(--teal)'; }
+    if (level === 'Medium') { bg = 'var(--amber-soft)'; fg = 'var(--amber)'; }
+    if (level === 'High') { bg = 'var(--coral-soft)'; fg = 'var(--coral)'; }
 
     return `
         <div class="tt-title">Risk Score Scale</div>
-        <div class="tt-current" style="display:block; background:${bg}; color:#e2e8f0;">
-            ▶ CURRENT: <strong style="color:${fg};">${esc(level.toUpperCase())}</strong> · ${score}/100
+        <div class="tt-current" style="display:block; background:${bg}; color:${fg}; border:1px solid ${fg};">
+            ▶ CURRENT: <strong>${esc(level.toUpperCase())}</strong> · ${score}/100
         </div>
         <div class="tt-row ${level==='Low'?'tt-active':''}" data-tier="Low"><span class="tt-range">0 – 29</span><span class="tt-tier tt-low">Low</span><span class="tt-desc">Safe</span></div>
         <div class="tt-row ${level==='Medium'?'tt-active':''}" data-tier="Medium"><span class="tt-range">30 – 59</span><span class="tt-tier tt-med">Medium</span><span class="tt-desc">Review</span></div>
@@ -440,9 +439,9 @@ function buildRiskTooltip(level, score) {
 
 function buildVerifyTooltip(status) {
     if (status === 'verified') {
-        return `<div class="tt-title" style="color:#4ade80;">✓ Mechanic Verified</div><div style="font-size: 12.5px; line-height: 1.6; color: #e2e8f0;">A real mechanic has physically inspected this vehicle. The risk score is hidden because human inspection is trusted.</div>`;
+        return `<div class="tt-title" style="color:var(--teal);">✓ Mechanic Verified</div><div style="font-size: 12.5px; line-height: 1.6; color: var(--text);">A real mechanic has physically inspected this vehicle. The risk score is hidden because human inspection is trusted.</div>`;
     } else {
-        return `<div class="tt-title" style="color:#94a3b8;">Unverified Listing</div><div style="font-size: 12.5px; line-height: 1.6; color: #e2e8f0;">This data was self-reported. Because we haven't inspected it, the risk score is displayed to warn you of potential issues.</div>`;
+        return `<div class="tt-title" style="color:var(--text-muted);">Unverified Listing</div><div style="font-size: 12.5px; line-height: 1.6; color: var(--text);">This data was self-reported. Because we haven't inspected it, the risk score is displayed to warn you of potential issues.</div>`;
     }
 }
 
@@ -514,18 +513,9 @@ document.querySelector('.modal-content').addEventListener('scroll', () => {
     if (tooltip.classList.contains('show')) hideTooltip();
 }, { passive: true });
 
-/* ============ PHOTO GALLERY ============ */
 function buildPhotoGallery(r) {
-    const fields = [
-        ['photo_front', 'Front'],
-        ['photo_rear', 'Rear'],
-        ['photo_side', 'Side'],
-        ['photo_engine', 'Engine'],
-        ['photo_interior', 'Interior'],
-        ['photo_dashboard', 'Dashboard'],
-    ];
-    const available = fields.filter(([k]) => r[k] && r[k] !== 'null' && r[k] !== '');
-    return available.map(([k, label]) => ({ key: k, src: 'uploads/' + r[k], label }));
+    const fields = [['photo_front', 'Front'], ['photo_rear', 'Rear'], ['photo_side', 'Side'], ['photo_engine', 'Engine'], ['photo_interior', 'Interior'], ['photo_dashboard', 'Dashboard']];
+    return fields.filter(function(f) { return r[f[0]] && r[f[0]] !== 'null' && r[f[0]] !== ''; }).map(function(f) { return { key: f[0], src: 'uploads/' + r[f[0]], label: f[1] }; });
 }
 
 function setMainPhoto(src) {
@@ -533,37 +523,28 @@ function setMainPhoto(src) {
     const phEl = document.getElementById('m-placeholder');
     const box = document.getElementById('m-image-box');
     if (src) {
-        imgEl.src = src;
-        imgEl.style.display = 'block';
-        phEl.style.display = 'none';
-        box.classList.remove('car-placeholder');
+        imgEl.src = src; imgEl.style.display = 'block'; phEl.style.display = 'none'; box.classList.remove('car-placeholder');
     } else {
-        imgEl.style.display = 'none';
-        phEl.style.display = 'flex';
-        box.classList.add('car-placeholder');
+        imgEl.style.display = 'none'; phEl.style.display = 'flex'; box.classList.add('car-placeholder');
     }
 }
 
-/* ============ MODAL ============ */
 function openListingModal(idx) {
     const r = LISTINGS[idx];
     if (!r) return;
 
-    /* ----- Photos ----- */
     const photos = buildPhotoGallery(r);
     const thumbStrip = document.getElementById('m-thumb-strip');
     thumbStrip.innerHTML = '';
     if (photos.length > 0) {
         setMainPhoto(photos[0].src);
         if (photos.length > 1) {
-            photos.forEach((p, i) => {
+            photos.forEach(function(p, i) {
                 const t = document.createElement('img');
-                t.src = p.src;
-                t.className = 'modal-thumb' + (i === 0 ? ' active' : '');
-                t.alt = p.label;
-                t.onclick = () => {
+                t.src = p.src; t.className = 'modal-thumb' + (i === 0 ? ' active' : ''); t.alt = p.label;
+                t.onclick = function() {
                     setMainPhoto(p.src);
-                    thumbStrip.querySelectorAll('.modal-thumb').forEach(el => el.classList.remove('active'));
+                    thumbStrip.querySelectorAll('.modal-thumb').forEach(function(el) { el.classList.remove('active'); });
                     t.classList.add('active');
                 };
                 thumbStrip.appendChild(t);
@@ -573,17 +554,14 @@ function openListingModal(idx) {
         }
         thumbStrip.style.display = '';
     } else {
-        setMainPhoto(null);
-        thumbStrip.style.display = 'none';
+        setMainPhoto(null); thumbStrip.style.display = 'none';
     }
 
-    /* ----- Header ----- */
     setText('m-title', r.brand + ' ' + r.model);
-    setText('m-subtitle', `${r.year_manufactured} • ${Number(r.mileage).toLocaleString()} km • ${r.transmission || 'N/A'} • ${r.fuel_type || 'N/A'}`);
+    setText('m-subtitle', r.year_manufactured + ' • ' + Number(r.mileage).toLocaleString() + ' km • ' + (r.transmission || 'N/A') + ' • ' + (r.fuel_type || 'N/A'));
     setText('m-price', '₱' + Number(r.asking_price).toLocaleString());
     setText('m-price-meta', r.price_negotiability || 'Fixed Price');
 
-    /* ----- Specs ----- */
     setText('m-year', r.year_manufactured);
     setText('m-mileage', Number(r.mileage).toLocaleString() + ' km');
     setText('m-color', r.color);
@@ -591,79 +569,58 @@ function openListingModal(idx) {
     setText('m-fuel', r.fuel_type);
     setText('m-mods', r.modifications || 'Stock / None');
 
-    /* ----- Condition & History ----- */
     setHtml('m-first-owner', yesNoPill(r.first_owner));
     setText('m-maint', r.maintenance_history || 'N/A');
     const acc = (r.accident_history || 'None').trim();
-    setHtml('m-accident', acc && acc.toLowerCase() !== 'none'
-        ? '<span class="pill-no">' + esc(acc) + '</span>'
-        : '<span class="pill-yes">✓ None</span>');
+    setHtml('m-accident', acc && acc.toLowerCase() !== 'none' ? '<span class="pill-no">' + esc(acc) + '</span>' : '<span class="pill-yes">✓ None</span>');
     setHtml('m-flooded', yesNoPill(r.flooded));
 
-    /* ----- Legal ----- */
     setText('m-lto', r.registration_status || 'N/A');
     setHtml('m-orcr', yesNoPill(r.or_cr_ready));
     setHtml('m-paid', yesNoPill(r.fully_paid));
     setHtml('m-deed', yesNoPill(r.deed_of_sale_ready));
 
-    /* ----- Pricing ----- */
     setText('m-nego', r.price_negotiability || 'N/A');
     setHtml('m-trade', yesNoPill(r.trade_in));
     setText('m-warranty', r.warranty_status || 'No Warranty');
     setText('m-payment', r.payment_methods || 'Cash');
 
-    /* ----- Location ----- */
     setText('m-city', r.city);
     setText('m-barangay', r.barangay);
     setText('m-location', r.location || [r.city, r.district, r.barangay].filter(Boolean).join(', '));
 
-    /* ----- Seller ----- */
     setText('m-seller', r.seller_name, 'Anonymous Seller');
     setText('m-contact', r.seller_contact);
-    document.getElementById('m-contact').style.fontFamily = 'var(--font-mono)';
 
-    /* ----- Notes ----- */
     const notesWrap = document.getElementById('m-notes-wrap');
     const notesSection = document.getElementById('m-notes-section');
     const notesHtml = [];
     if (r.reason_for_selling) notesHtml.push(`<div class="notes-box"><span class="notes-lbl">Reason for Selling</span>${esc(r.reason_for_selling)}</div>`);
     if (r.seller_notes) notesHtml.push(`<div class="notes-box"><span class="notes-lbl">Additional Notes</span>${esc(r.seller_notes)}</div>`);
+    
     if (notesHtml.length > 0) {
-        notesWrap.innerHTML = notesHtml.join('');
-        notesSection.style.display = 'block';
+        notesWrap.innerHTML = notesHtml.join(''); notesSection.style.display = 'block';
     } else {
         notesSection.style.display = 'none';
     }
 
-    /* ----- Risk ----- */
     const riskSection = document.getElementById('m-risk-section');
     if ((r.verification_status ?? '') === 'mechanic_verified') {
         riskSection.style.display = 'none';
     } else {
         riskSection.style.display = 'block';
-        const riskMap = {
-            'Low':    { bg: '#ecfdf5', fg: '#059669', border: '#a7f3d0', icon: '✓' },
-            'Medium': { bg: '#fffbeb', fg: '#d97706', border: '#fde68a', icon: '⚠' },
-            'High':   { bg: '#fef2f2', fg: '#dc2626', border: '#fecaca', icon: '✕' }
-        };
+        const riskMap = { 'Low': { bg: 'var(--teal-soft)', fg: 'var(--teal)', border: 'var(--teal)', icon: '✓' }, 'Medium': { bg: 'var(--amber-soft)', fg: 'var(--amber)', border: 'var(--amber)', icon: '⚠' }, 'High': { bg: 'var(--coral-soft)', fg: 'var(--coral)', border: 'var(--coral)', icon: '✕' } };
         const badge = document.getElementById('m-risk-badge');
         const flagsDiv = document.getElementById('m-risk-flags');
 
         if (r.risk_level && riskMap[r.risk_level]) {
             const c = riskMap[r.risk_level];
-            badge.innerHTML = '<span class="risk-badge" '
-                + 'data-level="' + r.risk_level + '" '
-                + 'data-score="' + (r.risk_score ?? 0) + '" '
-                + 'style="background:' + c.bg + '; color:' + c.fg + '; border: 1px solid ' + c.border
-                + '; font-size: 13px; padding: 6px 14px;">'
-                + c.icon + ' Risk Score: ' + r.risk_level + '</span>';
-            const flags = (r.risk_flags || '').split('|').map(f => f.trim()).filter(f => f.length > 0);
-            flagsDiv.innerHTML = flags.length
-                ? flags.map(f => '<div class="flag-item">' + esc(f) + '</div>').join('')
-                : '<div style="font-size: 13px; color: #64748b; font-style: italic;">No risk flags detected</div>';
+            badge.innerHTML = '<span class="risk-badge" data-level="' + r.risk_level + '" data-score="' + (r.risk_score ?? 0) + '" style="background:' + c.bg + '; color:' + c.fg + '; border: 1px solid ' + c.border + '; font-size: 13px; padding: 6px 14px;">' + c.icon + ' Risk Score: ' + r.risk_level + '</span>';
+            const flags = (r.risk_flags || '').split('|').map(function(f) { return f.trim(); }).filter(function(f) { return f.length > 0; });
+            flagsDiv.innerHTML = flags.length ? flags.map(function(f) { return '<div class="flag-item">' + esc(f) + '</div>'; }).join('') : '<div style="font-size: 13px; color: var(--text-muted); font-style: italic;">No risk flags detected</div>';
         } else {
-            badge.innerHTML = '<span class="risk-badge" style="background:#f1f5f9; color:#64748b; border: 1px solid #e2e8f0;">Not evaluated</span>';
-            flagsDiv.innerHTML = '<div style="font-size: 13px; color: #64748b; font-style: italic;">Not evaluated.</div>';
+            badge.innerHTML = '<span class="risk-badge" style="background:var(--surface-hover); color:var(--text-muted); border: 1px solid var(--border);">Not evaluated</span>';
+            flagsDiv.innerHTML = '<div style="font-size: 13px; color: var(--text-muted); font-style: italic;">Not evaluated.</div>';
         }
     }
 

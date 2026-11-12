@@ -70,14 +70,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['predict'])) {
     $deed_ready      = in_array($_POST['deed_of_sale_ready'] ?? '', $YES_NO, true) ? $_POST['deed_of_sale_ready'] : 'Yes';
     
     $color = $_POST['color'] ?? 'Other / Custom';
-    $city  = trim($_POST['city'] ?? 'Manila'); // Changed to text input
-    $barangay = 'Unknown'; // Default since we removed dropdown
+    $city  = trim($_POST['city'] ?? 'Other City');
+    $barangay = trim($_POST['barangay'] ?? 'Unknown');
 
     if ($model === '') { $errors['model'] = 'Required.'; }
     if ($year_raw === '' || !ctype_digit($year_raw)) { $errors['year'] = 'Required.'; }
     if ($mileage_raw === '' || !ctype_digit($mileage_raw) || (int)$mileage_raw < 0 || (int)$mileage_raw > 5230930) {
         $errors['mileage'] = 'Invalid mileage (0 - 5,230,930 km).';
     }
+    if ($city === '') { $errors['city'] = 'Required.'; }
+    if ($barangay === '') { $errors['barangay'] = 'Required.'; }
 
     if (empty($errors)) {
         $year = (int)$year_raw;
@@ -132,6 +134,7 @@ include 'header.php';
 ?>
 
 <script src="car_colors.php"></script>
+<script src="ph_locations.php"></script>
 
 <div class="view">
   <div class="two-col">
@@ -172,10 +175,6 @@ include 'header.php';
               </div>
               <div class="field-error"><?php echo e($errors['mileage'] ?? ''); ?></div>
             </div>
-            <div class="field" style="grid-column: span 2;">
-              <label>City / Municipality (e.g. Manila, Quezon City, Cebu City)</label>
-              <input type="text" name="city" value="<?php echo e($f['city'] ?? 'Manila'); ?>" placeholder="Enter City">
-            </div>
           </div>
         </div>
 
@@ -211,6 +210,31 @@ include 'header.php';
             <div class="field"><label>Deed of Sale Ready?</label><select name="deed_of_sale_ready"><?php foreach ($YES_NO as $opt): echo option($opt, $f['deed_of_sale_ready'] ?? 'Yes'); endforeach; ?></select></div>
           </div>
         </div>
+
+        <div class="form-section">
+          <div class="form-section-title">Location</div>
+          <div class="form-grid">
+            <div class="field"><label>City / Municipality <span class="req">*</span></label>
+              <select name="city" id="city-select" required>
+                <option value="">Select City / Municipality</option>
+              </select>
+              <div class="field-error"><?php echo e($errors['city'] ?? ''); ?></div>
+            </div>
+            <div class="field" id="district-wrapper" style="display: block;">
+              <label>District</label>
+              <select name="district" id="district-select" disabled>
+                <option value="">Select city first</option>
+              </select>
+            </div>
+            <div class="field" style="grid-column: span 2;">
+              <label>Barangay <span class="req">*</span></label>
+              <select name="barangay" id="barangay-select" required disabled>
+                <option value="">Select city (and district) first</option>
+              </select>
+              <div class="field-error"><?php echo e($errors['barangay'] ?? ''); ?></div>
+            </div>
+          </div>
+        </div>
         
         <div class="btn-row"><input type="hidden" name="predict" value="1"><button type="submit" class="predict-btn">Predict Price</button></div>
       </form>
@@ -223,7 +247,14 @@ include 'header.php';
           <div class="ic" style="background:var(--teal-soft);"><svg viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2"><path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"/></svg></div>
           <h3>Valuation Report</h3>
         </div>
+        
         <?php if ($estimated_price !== null): ?>
+            <!-- DOWNLOAD PDF BUTTON -->
+            <button onclick="window.print()" style="width: 100%; margin-bottom: 20px; padding: 10px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; font-weight: 700; color: #334155; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: 0.2s;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Download Official Report
+            </button>
+
             <div class="price-box" style="margin-bottom:24px;">
               <div class="lbl">Estimated Fair Market Value</div>
               <div class="amt">₱<?php echo number_format($estimated_price); ?></div>
@@ -269,11 +300,13 @@ include 'header.php';
 
 <script>
 const CATALOG = <?php echo json_encode($catalog, JSON_UNESCAPED_UNICODE); ?>;
-const INITIAL = { model:<?php echo json_encode($f['model'] ?? ''); ?>, year:<?php echo json_encode($f['year'] ?? ''); ?>, color:<?php echo json_encode($f['color'] ?? ''); ?> };
+const INITIAL = { model:<?php echo json_encode($f['model'] ?? ''); ?>, year:<?php echo json_encode($f['year'] ?? ''); ?>, color:<?php echo json_encode($f['color'] ?? ''); ?>, city:<?php echo json_encode($f['city'] ?? ''); ?>, district:<?php echo json_encode($f['district'] ?? ''); ?>, barangay:<?php echo json_encode($f['barangay'] ?? ''); ?> };
+const CURRENT_YEAR = <?php echo $current_year; ?>;
 const modelSelect = document.getElementById('model');
 const yearSelect  = document.getElementById('year');
 const colorSelect = document.getElementById('color');
 
+// Vehicle Catalog Logic
 function resetSelect(select, placeholder, disabled) {
     select.innerHTML = '';
     const opt = document.createElement('option'); opt.value = ''; opt.textContent = placeholder;
@@ -319,11 +352,115 @@ function refreshColors(selectedColor) {
 modelSelect.addEventListener('change', () => { refreshYears(null); resetSelect(colorSelect, 'Select brand/model/year first', true); });
 yearSelect.addEventListener('change', () => { refreshColors(null); });
 
+// 3-Level Location Logic
+const citySelect     = document.getElementById('city-select');
+const districtSelect = document.getElementById('district-select');
+const districtWrap   = document.getElementById('district-wrapper');
+const barangaySelect = document.getElementById('barangay-select');
+
+const regionGroups = {
+    "Metro Manila (NCR)": ['Caloocan','Las Piñas','Makati','Malabon','Mandaluyong','Manila','Marikina','Muntinlupa','Navotas','Parañaque','Pasay','Pateros','Quezon City','San Juan','Taguig','Valenzuela'],
+    "Cavite": ['Bacoor','Imus','Noveleta','Kawit','Dasmariñas','Tagaytay','Trece Martires','Cavite City','General Trias'],
+    "Laguna": ['Calamba','San Pedro','Santa Rosa','Biñan','Los Baños','Cabuyao','Santa Cruz','Bay','Victoria','Pakil','Pila','Lumban','Cavinti'],
+    "Rizal": ['Antipolo','Cainta','Taytay','Angono','Binangonan','Cardona','Morong','Baras','Tanay','Pililla','Jala-Jala','San Mateo'],
+    "Bulacan": ['Malolos','Meycauayan','Marilao','Bocaue','Hagonoy','Calumpit','Paombong','San Jose del Monte','San Miguel','Pulilan','Balagtas','Guiguinto','Pandi'],
+    "Pampanga": ['San Fernando (Pampanga)','Angeles','Mabalacat','Lubao','Sasmuan','Macabebe','Porac','Masantol','Candaba','Guagua','Arayat','Apalit','San Simon','Floridablanca'],
+    "Visayas": ['Cebu City','Mandaue','Lapu-Lapu','Iloilo City','Bacolod','Dumaguete','Tagbilaran'],
+    "Mindanao": ['Davao City','Cagayan de Oro','Zamboanga City','General Santos']
+};
+
+Object.keys(regionGroups).forEach(function(region) {
+    const group = document.createElement('optgroup');
+    group.label = region;
+    regionGroups[region].forEach(function(city) {
+        const opt = document.createElement('option');
+        opt.value = city; opt.textContent = city;
+        if (city === INITIAL.city) opt.selected = true;
+        group.appendChild(opt);
+    });
+    citySelect.appendChild(group);
+});
+
+citySelect.addEventListener('change', function() {
+    const city = this.value;
+    districtSelect.innerHTML = '';
+    barangaySelect.innerHTML = '<option value="">Select city (and district) first</option>';
+    barangaySelect.disabled = true;
+
+    if (!city) {
+        districtSelect.innerHTML = '<option value="">Select city first</option>';
+        districtSelect.disabled = true;
+        districtWrap.style.display = 'block';
+        return;
+    }
+
+    const hasDistricts = window.isCityWithDistricts(city);
+
+    if (hasDistricts) {
+        districtWrap.style.display = 'block';
+        districtSelect.disabled = false;
+        districtSelect.innerHTML = '<option value="">Select district</option>';
+        window.getDistricts(city).forEach(function(d) {
+            const opt = document.createElement('option');
+            opt.value = d; opt.textContent = d;
+            districtSelect.appendChild(opt);
+        });
+        districtSelect.options[0].disabled = true;
+    } else {
+        districtWrap.style.display = 'none';
+        districtSelect.disabled = true;
+        districtSelect.innerHTML = '<option value="">N/A</option>';
+
+        barangaySelect.disabled = false;
+        barangaySelect.innerHTML = '<option value="">Select barangay</option>';
+        window.getBarangays(city, '').forEach(function(b) {
+            const opt = document.createElement('option');
+            opt.value = b; opt.textContent = b;
+            barangaySelect.appendChild(opt);
+        });
+        barangaySelect.options[0].disabled = true;
+    }
+});
+
+districtSelect.addEventListener('change', function() {
+    const city = citySelect.value;
+    const district = this.value;
+    barangaySelect.innerHTML = '';
+    barangaySelect.disabled = true;
+
+    if (!city || !district) {
+        barangaySelect.innerHTML = '<option value="">Select district first</option>';
+        return;
+    }
+
+    barangaySelect.disabled = false;
+    barangaySelect.innerHTML = '<option value="">Select barangay</option>';
+    window.getBarangays(city, district).forEach(function(b) {
+        const opt = document.createElement('option');
+        opt.value = b; opt.textContent = b;
+        barangaySelect.appendChild(opt);
+    });
+    barangaySelect.options[0].disabled = true;
+});
+
+// Init
 (function init() {
     refreshModels(INITIAL.model);
     if (INITIAL.model) {
         refreshYears(INITIAL.year);
         if (INITIAL.year) { refreshColors(INITIAL.color); }
+    }
+    if (INITIAL.city) {
+        citySelect.dispatchEvent(new Event('change'));
+        if (INITIAL.district) {
+            districtSelect.value = INITIAL.district;
+            districtSelect.dispatchEvent(new Event('change'));
+            if (INITIAL.barangay) {
+                barangaySelect.value = INITIAL.barangay;
+            }
+        } else if (INITIAL.barangay) {
+            barangaySelect.value = INITIAL.barangay;
+        }
     }
 })();
 </script>
