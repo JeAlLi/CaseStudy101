@@ -4,60 +4,77 @@ import base64
 import warnings
 import pandas as pd
 import pymysql
-from sklearn.linear_model import LinearRegression
+import datetime
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 
-# Suppress warnings to ensure clean output for PHP
 warnings.filterwarnings('ignore')
 
 def main():
     try:
-        # 1. Decode the Base64 string sent by PHP back into JSON
         decoded_bytes = base64.b64decode(sys.argv[1])
         decoded_str = decoded_bytes.decode('utf-8')
         input_data = json.loads(decoded_str)
         
-        # 2. Connect to the XAMPP Database
-        # (Make sure 'casestudy101' matches your exact database name)
         conn = pymysql.connect(host='localhost', user='root', password='', db='vehicle_predictor')
         
-        # 3. Load the live dataset
-        query = "SELECT brand, model, year_manufactured, mileage, transmission, fuel_type, asking_price FROM vehicle_listings WHERE status = 'approved' AND asking_price > 0"
+        # Updated query to include Barangay and First Owner
+        query = """
+            SELECT brand, model, year_manufactured, mileage, transmission, fuel_type, 
+                   COALESCE(city, 'Unknown') AS city, 
+                   COALESCE(barangay, 'Unknown') AS barangay,
+                   COALESCE(color, 'Unknown') AS color,
+                   COALESCE(or_cr_ready, 'Yes') AS or_cr_ready,
+                   COALESCE(fully_paid, 'Yes') AS fully_paid,
+                   COALESCE(deed_of_sale_ready, 'Yes') AS deed_of_sale_ready,
+                   COALESCE(first_owner, 'No') AS first_owner,
+                   CASE WHEN maintenance_history LIKE '%Casa%' THEN 'Yes' ELSE 'No' END AS casa_maintained,
+                   asking_price 
+            FROM vehicle_listings 
+            WHERE status = 'approved' AND asking_price > 0
+        """
         df = pd.read_sql(query, conn)
         conn.close()
         
-        # 4. Define Features (X) and Target (y)
-        X = df[['brand', 'model', 'year_manufactured', 'mileage', 'transmission', 'fuel_type']]
+        if len(df) < 3:
+            print(json.dumps({"status": "error", "message": "Not enough approved listings to train the model."}))
+            return
+
+        current_year = datetime.datetime.now().year
+        df['age'] = current_year - df['year_manufactured']
+        input_data['age'] = current_year - int(input_data['year_manufactured'])
+        
+        features = ['brand', 'model', 'transmission', 'fuel_type', 'city', 'barangay', 'color', 
+                    'or_cr_ready', 'fully_paid', 'deed_of_sale_ready', 'first_owner', 'casa_maintained', 'age', 'mileage']
+        X = df[features]
         y = df['asking_price']
         
-        # 5. Build the Multiple Linear Regression Pipeline
-        categorical_features = ['brand', 'model', 'transmission', 'fuel_type']
-        numerical_features = ['year_manufactured', 'mileage']
+        categorical_features = ['brand', 'model', 'transmission', 'fuel_type', 'city', 'barangay', 'color', 
+                                'or_cr_ready', 'fully_paid', 'deed_of_sale_ready', 'first_owner', 'casa_maintained']
+        numerical_features = ['age', 'mileage']
         
         preprocessor = ColumnTransformer(
             transformers=[
                 ('num', 'passthrough', numerical_features),
-                # handle_unknown='ignore' prevents crashes if a completely new car is entered
                 ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
             ])
             
         model = Pipeline(steps=[('preprocessor', preprocessor),
-                                ('regressor', LinearRegression())])
+                                ('regressor', RandomForestRegressor(n_estimators=100, random_state=42))])
                                 
-        # 6. Train the Model on the live data
         model.fit(X, y)
         
-        # 7. Predict the price for the user's specific car
         user_df = pd.DataFrame([input_data])
-        prediction = model.predict(user_df)[0]
+        user_df['mileage'] = pd.to_numeric(user_df['mileage'], errors='coerce').fillna(0)
+        user_df['age'] = pd.to_numeric(user_df['age'], errors='coerce').fillna(0)
         
-        # 8. Return success response to PHP
+        prediction = model.predict(user_df[features])[0]
+        
         print(json.dumps({"status": "success", "predicted_price": round(prediction, 2)}))
         
     except Exception as e:
-        # If anything fails, return the exact error to PHP
         print(json.dumps({"status": "error", "message": str(e)}))
 
 if __name__ == "__main__":

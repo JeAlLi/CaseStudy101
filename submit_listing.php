@@ -17,6 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $fuel_type = $_POST['fuel_type'] ?? '';
         $plate_ending = $_POST['plate_ending'] ?? '';
         $is_stock = $_POST['is_stock'] ?? 'Yes';
+        
         $modifications = 'Stock / None';
         if ($is_stock === 'No') {
             $mod_list = $_POST['modifications'] ?? [];
@@ -28,7 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // Collect Section 4: Condition & History
+        // Condition & History
         $first_owner = $_POST['first_owner'] ?? 'No';
         $casa_maintained = $_POST['casa_maintained'] ?? 'No';
         $accident_history = ($_POST['major_accident'] ?? 'No') === 'Yes' ? ($_POST['accident_details'] ?? 'Yes') : 'None';
@@ -39,77 +40,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $fully_paid = $_POST['fully_paid'] ?? 'Yes';
         $deed_of_sale = $_POST['deed_of_sale'] ?? 'Yes';
 
-        // Collect Section 6: Pricing & Payment
-        $asking_price = $_POST['asking_price'] ?? 0;
+        // Pricing & Payment
+        $asking_price = str_replace(['₱', ',', ' '], '', $_POST['asking_price'] ?? '0');
         $price_negotiability = ($_POST['negotiable'] ?? 'No') === 'Yes' ? 'Negotiable' : 'Fixed Price';
         $payment_methods = isset($_POST['payment_methods']) ? implode(', ', $_POST['payment_methods']) : 'Cash';
         $trade_in = $_POST['trade_in'] ?? 'No';
 
-        // Collect Section 8: Seller Information
+        // Location (3-Level)
+        $city     = trim($_POST['city'] ?? '');
+        $district = trim($_POST['district'] ?? '');
+        $barangay = trim($_POST['barangay'] ?? '');
+        $landmark = trim($_POST['location'] ?? '');
+
+        if ($city === '') { throw new Exception('Please select a City / Municipality.'); }
+        if ($barangay === '') { throw new Exception('Please select a Barangay.'); }
+        
+        // Combine into a single string for the 'location' column
+        $full_location = $city . ', ' . ($district ? $district . ', ' : '') . $barangay . ($landmark ? ' — ' . $landmark : '');
+
+        // Seller Info
         $seller_name = $_POST['seller_name'] ?? '';
         $primary_contact = $_POST['seller_contact'] ?? '';
         $other_contact = $_POST['other_contact'] ?? '';
-        
-        // Combine contacts if an alternative modality is provided
         $seller_contact = $primary_contact;
         if (!empty($other_contact)) {
             $seller_contact .= ' (' . trim($other_contact) . ')';
         }
-        $location = $_POST['location'] ?? '';
         
-        // Collect Section 9: Final Touches
+        // Final Touches
         $reason_for_selling = $_POST['rfs'] ?? '';
         $warranty_status = $_POST['warranty_status'] ?? 'No Warranty';
         $seller_notes = $_POST['seller_notes'] ?? '';
 
-        // --- Handle Section 7: Photo Uploads ---
+        // Handle Photo Uploads
         $upload_dir = 'uploads/';
-        // Create uploads folder if it doesn't exist
-        if (!is_dir($upload_dir)) {
-            mkdir($upload_dir, 0777, true);
-        }
+        if (!is_dir($upload_dir)) mkdir($upload_dir, 0777, true);
 
         $photo_fields = ['photo_front', 'photo_rear', 'photo_side', 'photo_engine', 'photo_interior', 'photo_dashboard'];
         $uploaded_files = [];
 
         foreach ($photo_fields as $field) {
-            $uploaded_files[$field] = null; // Default to null if no photo
-            
+            $uploaded_files[$field] = null;
             if (isset($_FILES[$field]) && $_FILES[$field]['error'] === UPLOAD_ERR_OK) {
-                // Generate a unique file name to prevent overwriting (e.g., 65f3a4b2_front.jpg)
                 $file_extension = pathinfo($_FILES[$field]['name'], PATHINFO_EXTENSION);
                 $new_filename = uniqid() . '_' . $field . '.' . $file_extension;
-                $destination = $upload_dir . $new_filename;
-                
-                if (move_uploaded_file($_FILES[$field]['tmp_name'], $destination)) {
-                    $uploaded_files[$field] = $new_filename; // Save only the filename to the database
+                if (move_uploaded_file($_FILES[$field]['tmp_name'], $upload_dir . $new_filename)) {
+                    $uploaded_files[$field] = $new_filename;
                 }
             }
         }
 
-        // Insert into vehicle_listings table (Now including photo columns)
-        $stmt = $pdo->prepare("
-            INSERT INTO vehicle_listings (
-                vehicle_type, brand, model, year_manufactured, mileage, color, 
-                transmission, fuel_type, modifications, registration_status, or_cr_ready, fully_paid, deed_of_sale_ready,
-                maintenance_history, accident_history, first_owner, flooded, 
-                asking_price, price_negotiability, payment_methods, trade_in,
-                location, reason_for_selling, warranty_status, seller_notes, 
-                photo_front, photo_rear, photo_side, photo_engine, photo_interior, photo_dashboard,
-                status, listing_type, seller_name, seller_contact
-            ) VALUES (
-                'Car', ?, ?, ?, ?, ?, 
-                ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, 
-                ?, ?, ?, ?,
-                ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, 
-                'pending', 'user_sale', ?, ?
-            )
-        ");
-
         $maintenance_history = $casa_maintained === 'Yes' ? 'Excellent (Casa)' : $general_condition;
 
+        // RUN RISK ENGINE
         $risk = compute_risk_score($pdo, [
             'brand' => $brand, 'model' => $model,
             'year_manufactured' => (int)$year_manufactured,
@@ -121,38 +104,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'barangay' => $barangay,
             'accident_history' => $accident_history,
             'is_flood_flagged' => ($flooded === 'Yes'),
-            'seller_contact' => $seller_contact,
+            'verification_status' => 'unverified', // New user sales default to unverified
         ]);
 
         if ($risk['risk_level'] === 'High') {
             throw new Exception('Listing rejected by risk engine: ' . implode('; ', $risk['flags']));
         }
 
+        // INSERT INTO DATABASE (One single query)
         $stmt = $pdo->prepare("
             INSERT INTO vehicle_listings (
-                vehicle_type, brand, model, year_manufactured, mileage, color,
-                transmission, fuel_type, modifications, registration_status,
-                maintenance_history, accident_history, asking_price, price_negotiability,
-                location, city, district, barangay, reason_for_selling, status, listing_type, seller_contact,
+                vehicle_type, brand, model, year_manufactured, mileage, color, 
+                transmission, fuel_type, modifications, registration_status, or_cr_ready, fully_paid, deed_of_sale_ready,
+                maintenance_history, accident_history, first_owner, flooded, 
+                asking_price, price_negotiability, payment_methods, trade_in,
+                location, city, district, barangay, reason_for_selling, warranty_status, seller_notes, 
+                photo_front, photo_rear, photo_side, photo_engine, photo_interior, photo_dashboard,
+                status, listing_type, seller_name, seller_contact,
                 risk_score, risk_level, risk_flags, risk_recommendation, risk_evaluated_at
             ) VALUES (
-                'Car', ?, ?, ?, ?, ?,
+                'Car', ?, ?, ?, ?, ?, 
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, 
                 ?, ?, ?, ?,
-                ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, 'pending', 'user_sale', ?,
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, 
+                'pending', 'user_sale', ?, ?,
                 ?, ?, ?, ?, ?
             )
         ");
+        
         $stmt->execute([
             $brand, $model, $year_manufactured, $mileage, $color,
             $transmission, $fuel_type, $modifications, $lto_status, $or_cr, $fully_paid, $deed_of_sale,
             $maintenance_history, $accident_history, $first_owner, $flooded,
             $asking_price, $price_negotiability, $payment_methods, $trade_in,
-            $location, $reason_for_selling, $warranty_status, $seller_notes,
-            // Pass the generated photo filenames to the database
+            $full_location, $city, $district, $barangay, $reason_for_selling, $warranty_status, $seller_notes,
             $uploaded_files['photo_front'], $uploaded_files['photo_rear'], $uploaded_files['photo_side'], 
             $uploaded_files['photo_engine'], $uploaded_files['photo_interior'], $uploaded_files['photo_dashboard'],
-            $seller_name, $seller_contact
+            $seller_name, $seller_contact,
+            $risk['risk_score'], $risk['risk_level'], implode(' | ', $risk['flags']), $risk['recommendation'], date('Y-m-d H:i:s')
         ]);
 
         $success_message = "Your listing has been submitted successfully and is pending review.";
@@ -164,152 +155,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 include 'header.php';
 ?>
 <style>
-    .form-container {
-        background: #ffffff;
-        border-radius: 12px;
-        padding: 32px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        border: 1px solid #e5e7eb;
-        max-width: 900px;
-        margin: 0 auto;
-    }
-    .form-section {
-        margin-bottom: 32px;
-        padding-bottom: 24px;
-        border-bottom: 1px solid #f3f4f6;
-    }
-    .form-section:last-child {
-        border-bottom: none;
-    }
-    .section-title {
-        font-size: 18px;
-        font-weight: 700;
-        color: #111827;
-        margin-bottom: 16px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .section-title span {
-        background: #5865f2;
-        color: white;
-        width: 24px;
-        height: 24px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 50%;
-        font-size: 12px;
-    }
-    .grid-2 {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 20px;
-    }
-    .form-group {
-        display: flex;
-        flex-direction: column;
-        margin-bottom: 16px;
-    }
-    .form-group label {
-        font-size: 13px;
-        font-weight: 600;
-        color: #374151;
-        margin-bottom: 8px;
-    }
-    .form-control {
-        padding: 10px 14px;
-        border: 1px solid #d1d5db;
-        border-radius: 6px;
-        font-size: 14px;
-        color: #111827;
-        background: #f9fafb;
-    }
-    .form-control:focus {
-        outline: none;
-        border-color: #5865f2;
-        box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.1);
-    }
-    .radio-group, .checkbox-group {
-        display: flex;
-        gap: 16px;
-        flex-wrap: wrap;
-    }
-    .radio-label, .checkbox-label {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 14px;
-        color: #4b5563;
-        cursor: pointer;
-    }
-    .btn-submit {
-        background: #5865f2;
-        color: white;
-        padding: 12px 24px;
-        border: none;
-        border-radius: 8px;
-        font-size: 16px;
-        font-weight: 600;
-        cursor: pointer;
-        width: 100%;
-        transition: background 0.2s;
-    }
-    .btn-submit:hover {
-        background: #4752c4;
-    }
-    .alert {
-        padding: 16px;
-        border-radius: 8px;
-        margin-bottom: 24px;
-        font-weight: 500;
-    }
+    .form-container { background: #ffffff; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid #e5e7eb; max-width: 900px; margin: 0 auto; }
+    .form-section { margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid #f3f4f6; }
+    .form-section:last-child { border-bottom: none; }
+    .section-title { font-size: 18px; font-weight: 700; color: #111827; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+    .section-title span { background: #5865f2; color: white; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; font-size: 12px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .form-group { display: flex; flex-direction: column; margin-bottom: 16px; }
+    .form-group label { font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 8px; }
+    .form-control { padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; color: #111827; background: #f9fafb; }
+    .form-control:focus { outline: none; border-color: #5865f2; box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.1); }
+    .form-control:disabled { background: #e5e7eb; cursor: not-allowed; }
+    .radio-group, .checkbox-group { display: flex; gap: 16px; flex-wrap: wrap; }
+    .radio-label, .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #4b5563; cursor: pointer; }
+    .btn-submit { background: #5865f2; color: white; padding: 12px 24px; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; width: 100%; transition: background 0.2s; }
+    .btn-submit:hover { background: #4752c4; }
+    .alert { padding: 16px; border-radius: 8px; margin-bottom: 24px; font-weight: 500; }
     .alert-success { background: #d1fae5; color: #065f46; border: 1px solid #34d399; }
     .alert-danger { background: #fee2e2; color: #991b1b; border: 1px solid #f87171; }
-
-    /* Custom Camera Upload Styling */
-    .photo-capture-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 16px;
-        margin-bottom: 24px;
-    }
-    .photo-upload-box {
-        border: 2px dashed #d1d5db;
-        border-radius: 8px;
-        padding: 20px 10px;
-        text-align: center;
-        background: #f9fafb;
-        position: relative;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-    }
-    .camera-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        background: #5865f2;
-        color: white;
-        padding: 10px 16px;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 13px;
-        font-weight: 600;
-        margin-top: 8px;
-        transition: background 0.2s;
-    }
+    .photo-capture-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .photo-upload-box { border: 2px dashed #d1d5db; border-radius: 8px; padding: 20px 10px; text-align: center; background: #f9fafb; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .camera-btn { display: inline-flex; align-items: center; gap: 8px; background: #5865f2; color: white; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; margin-top: 8px; transition: background 0.2s; }
     .camera-btn:hover { background: #4752c4; }
     .camera-btn svg { width: 16px; height: 16px; }
-    .photo-preview {
-        margin-top: 12px;
-        width: 100%;
-        border-radius: 6px;
-        height: 120px;
-        object-fit: cover;
-        border: 1px solid #e5e7eb;
-    }
+    .photo-preview { margin-top: 12px; width: 100%; border-radius: 6px; height: 120px; object-fit: cover; border: 1px solid #e5e7eb; }
 </style>
 
 <div class="view">
@@ -320,7 +189,6 @@ include 'header.php';
         <?php if ($success_message): ?><div class="alert alert-success"><?php echo $success_message; ?></div><?php endif; ?>
         <?php if ($error_message): ?><div class="alert alert-danger"><?php echo htmlspecialchars($error_message); ?></div><?php endif; ?>
 
-        <!-- Added enctype="multipart/form-data" required for file uploads -->
         <form method="POST" action="" enctype="multipart/form-data">
             <div class="form-section">
                 <div class="section-title"><span>1</span> Select Your Vehicle</div>
@@ -377,14 +245,6 @@ include 'header.php';
                             <label class="radio-label" id="fuel-gas"><input type="radio" name="fuel_type" id="radio-gas" value="Gasoline" required> Gas</label>
                             <label class="radio-label" id="fuel-diesel"><input type="radio" name="fuel_type" id="radio-diesel" value="Diesel"> Diesel</label>
                         </div>
-                    </div>
-                    <div class="form-group"><label>Plate Number Ending (Coding check)</label>
-                        <select name="plate_ending" class="form-control">
-                            <option value="">Select last digit</option>
-                            <?php for ($i = 0; $i <= 9; $i++): ?>
-                                <option value="<?php echo $i; ?>"><?php echo $i; ?></option>
-                            <?php endfor; ?>
-                        </select>
                     </div>
                 </div>
             </div>
@@ -511,98 +371,95 @@ include 'header.php';
                 </div>
             </div>
 
-            <!-- 7. Photos (Camera Integration) -->
             <div class="form-section">
                 <div class="section-title"><span>7</span> Photos</div>
                 <p style="font-size: 13px; color: #6b7280; margin-bottom: 16px;">Tap the buttons below to open your camera and capture each required angle.</p>
                 
                 <div class="photo-capture-grid">
-                    <!-- Front View -->
                     <div class="photo-upload-box">
                         <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Front View</label>
-                        <label for="photo_front" class="camera-btn">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
-                        </label>
+                        <label for="photo_front" class="camera-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture</label>
                         <input type="file" id="photo_front" name="photo_front" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_front')" required>
                         <img id="preview_front" class="photo-preview" style="display: none;">
                     </div>
-
-                    <!-- Rear View -->
                     <div class="photo-upload-box">
                         <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Rear View</label>
-                        <label for="photo_rear" class="camera-btn">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
-                        </label>
+                        <label for="photo_rear" class="camera-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture</label>
                         <input type="file" id="photo_rear" name="photo_rear" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_rear')" required>
                         <img id="preview_rear" class="photo-preview" style="display: none;">
                     </div>
-
-                    <!-- Side Profile -->
                     <div class="photo-upload-box">
                         <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Side Profile</label>
-                        <label for="photo_side" class="camera-btn">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
-                        </label>
+                        <label for="photo_side" class="camera-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture</label>
                         <input type="file" id="photo_side" name="photo_side" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_side')" required>
                         <img id="preview_side" class="photo-preview" style="display: none;">
                     </div>
-
-                    <!-- Engine Bay -->
                     <div class="photo-upload-box">
                         <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Engine Bay</label>
-                        <label for="photo_engine" class="camera-btn">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
-                        </label>
+                        <label for="photo_engine" class="camera-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture</label>
                         <input type="file" id="photo_engine" name="photo_engine" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_engine')" required>
                         <img id="preview_engine" class="photo-preview" style="display: none;">
                     </div>
-
-                    <!-- Interior -->
                     <div class="photo-upload-box">
                         <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Interior & Seats</label>
-                        <label for="photo_interior" class="camera-btn">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
-                        </label>
+                        <label for="photo_interior" class="camera-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture</label>
                         <input type="file" id="photo_interior" name="photo_interior" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_interior')" required>
                         <img id="preview_interior" class="photo-preview" style="display: none;">
                     </div>
-
-                    <!-- Dashboard / Odometer -->
                     <div class="photo-upload-box">
                         <label style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">Dashboard & Odometer</label>
-                        <label for="photo_dashboard" class="camera-btn">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture
-                        </label>
+                        <label for="photo_dashboard" class="camera-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> Capture</label>
                         <input type="file" id="photo_dashboard" name="photo_dashboard" accept="image/*" capture="environment" style="display: none;" onchange="previewImage(this, 'preview_dashboard')" required>
                         <img id="preview_dashboard" class="photo-preview" style="display: none;">
                     </div>
                 </div>
             </div>
 
-            <!-- 8. Seller Information -->
+            <!-- 8. Location & Seller Info -->
             <div class="form-section">
-                <div class="section-title"><span>8</span> Seller Information</div>
+                <div class="section-title"><span>8</span> Location & Seller Information</div>
                 <div class="grid-2">
+                    <div class="form-group" style="position:relative;">
+                        <label>City / Municipality <span style="color:#ef4444;">*</span></label>
+                        <select name="city" id="city-select" class="form-control" required>
+                            <option value="">Select City / Municipality</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="district-wrapper">
+                        <label>District <span style="color:#ef4444;">*</span></label>
+                        <select name="district" id="district-select" class="form-control" disabled>
+                            <option value="">Select city first</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="grid-column:span 2;">
+                        <label>Barangay <span style="color:#ef4444;">*</span></label>
+                        <select name="barangay" id="barangay-select" class="form-control" required disabled>
+                            <option value="">Select city (and district) first</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="grid-column:span 2;">
+                        <label>Street / Landmark <span style="color:#9ca3af;">(optional)</span></label>
+                        <input type="text" name="location" class="form-control" placeholder="e.g., SM North EDSA">
+                    </div>
+
+                    <div class="form-group" style="grid-column:span 2; margin-top: 16px;">
+                        <label style="font-size: 15px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 12px; color:#111827;">Seller Contact Details</label>
+                    </div>
                     <div class="form-group">
-                        <label>Seller Name</label>
+                        <label>Seller Name <span style="color:#ef4444;">*</span></label>
                         <input type="text" name="seller_name" class="form-control" placeholder="Full Name" required>
                     </div>
                     <div class="form-group">
-                        <label>Primary Contact Number</label>
-                        <input type="text" name="seller_contact" class="form-control" placeholder="e.g. 0917-123-4567" required>
+                        <label>Primary Contact Number <span style="color:#ef4444;">*</span></label>
+                        <input type="tel" name="seller_contact" id="seller-contact" class="form-control" placeholder="e.g. 09171234567" inputmode="numeric" maxlength="11" oninput="this.value = this.value.replace(/\D/g, '').slice(0, 11)" required>
                     </div>
                     <div class="form-group">
                         <label>Other Contact Method (Optional)</label>
                         <input type="text" name="other_contact" class="form-control" placeholder="e.g. Viber, Email, FB Messenger">
                     </div>
-                    <div class="form-group">
-                        <label>Viewing Location</label>
-                        <input type="text" name="location" class="form-control" placeholder="City or Landmark (e.g. Makati City)" required>
-                    </div>
                 </div>
             </div>
 
-            <!-- 9. The "Final Touches" -->
             <div class="form-section">
                 <div class="section-title"><span>9</span> The "Final Touches"</div>
                 <div class="form-group">
@@ -628,7 +485,6 @@ include 'header.php';
 <script src="car_colors.php"></script>
 <script src="ph_locations.php"></script>
 <script>
-// --- Image Preview for Camera Captures ---
 function previewImage(input, previewId) {
     const preview = document.getElementById(previewId);
     if (input.files && input.files[0]) {
@@ -656,12 +512,8 @@ document.addEventListener("DOMContentLoaded", function() {
     if (yearSelect.options[0])  yearSelect.options[0].disabled  = true;
 
     const fuelData = {
-        "Vios":     ["Gasoline"],
-        "Innova":   ["Diesel","Gasoline"],
-        "Fortuner": ["Diesel","Gasoline"],
-        "Hilux":    ["Diesel","Gasoline"],
-        "Wigo":     ["Gasoline"],
-        "Avanza":   ["Gasoline"]
+        "Vios":     ["Gasoline"], "Innova":   ["Diesel","Gasoline"], "Fortuner": ["Diesel","Gasoline"],
+        "Hilux":    ["Diesel","Gasoline"], "Wigo":     ["Gasoline"], "Avanza":   ["Gasoline"]
     };
 
     function populateColors() {
@@ -723,22 +575,15 @@ document.addEventListener("DOMContentLoaded", function() {
             colorCustom.value = '';
         }
     });
-    colorCustom.addEventListener('blur', function() {
-        if (this.value.trim() !== '') {
-            this.value = this.value.trim().replace(/\s+/g, ' ').toLowerCase()
-                .replace(/\b\w/g, function(c) { return c.toUpperCase(); });
-        }
-    });
 
     // ═══════════════════════════════════════════════════════════════
-    // 3-LEVEL LOCATION — now all native <select> dropdowns
+    // 3-LEVEL LOCATION DROPDOWNS
     // ═══════════════════════════════════════════════════════════════
     const citySelect     = document.getElementById('city-select');
     const districtSelect = document.getElementById('district-select');
     const districtWrap   = document.getElementById('district-wrapper');
     const barangaySelect = document.getElementById('barangay-select');
 
-    // ---- 1. Populate city dropdown (grouped by region) ----
     const regionGroups = {
         "Metro Manila (NCR)": ['Caloocan','Las Piñas','Makati','Malabon','Mandaluyong','Manila','Marikina','Muntinlupa','Navotas','Parañaque','Pasay','Pateros','Quezon City','San Juan','Taguig','Valenzuela'],
         "Cavite": ['Bacoor','Imus','Noveleta','Kawit','Dasmariñas','Tagaytay','Trece Martires','Cavite City','General Trias'],
@@ -761,11 +606,8 @@ document.addEventListener("DOMContentLoaded", function() {
         citySelect.appendChild(group);
     });
 
-    // ---- 2. City change: populate district OR barangay ----
     citySelect.addEventListener('change', function() {
         const city = this.value;
-
-        // Reset downstream
         districtSelect.innerHTML = '';
         barangaySelect.innerHTML = '<option value="">Select city (and district) first</option>';
         barangaySelect.disabled = true;
@@ -780,7 +622,6 @@ document.addEventListener("DOMContentLoaded", function() {
         const hasDistricts = window.isCityWithDistricts(city);
 
         if (hasDistricts) {
-            // Show district dropdown
             districtWrap.style.display = 'flex';
             districtSelect.disabled = false;
             districtSelect.innerHTML = '<option value="">Select district</option>';
@@ -791,7 +632,6 @@ document.addEventListener("DOMContentLoaded", function() {
             });
             districtSelect.options[0].disabled = true;
         } else {
-            // Hide district wrapper, go straight to barangay
             districtWrap.style.display = 'none';
             districtSelect.disabled = true;
             districtSelect.innerHTML = '<option value="">N/A</option>';
@@ -807,11 +647,9 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     });
 
-    // ---- 3. District change: populate barangay dropdown ----
     districtSelect.addEventListener('change', function() {
         const city = citySelect.value;
         const district = this.value;
-
         barangaySelect.innerHTML = '';
         barangaySelect.disabled = true;
 

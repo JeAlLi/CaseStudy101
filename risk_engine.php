@@ -321,7 +321,16 @@ function compute_risk_score(PDO $pdo, array $l): array {
     $price   = (float)($l['asking_price'] ?? $l['listed_price'] ?? 0);
     $accident = $l['accident_history'] ?? '';
     $flood_flag = !empty($l['is_flood_flagged']);
-
+    // --- DATA PROVENANCE / VERIFICATION (Trust Score) ---
+    $verification = $l['verification_status'] ?? 'unverified';
+    
+    if ($verification === 'mechanic_verified') {
+        $score -= 15; // Trust bonus
+        $flags[] = "Mechanic Verified — trusted condition report";
+    } else {
+        $score += 10; // Unverified penalty
+        $flags[] = "Unverified Listing — self-reported or scraped data";
+    }
     $est = isset($l['estimated_value']) && $l['estimated_value'] > 0
         ? ['value'=>(float)$l['estimated_value'], 'source'=>'provided', 'sample'=>0]
         : estimate_market_value($pdo, $l);

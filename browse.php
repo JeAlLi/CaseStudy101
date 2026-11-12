@@ -2,15 +2,14 @@
 require_once 'db.php';
 $current_page = 'browse';
 
-$f_brand = trim($_GET['brand'] ?? '');
 $f_model = trim($_GET['model'] ?? '');
 $f_min   = trim($_GET['min_price'] ?? '');
 $f_max   = trim($_GET['max_price'] ?? '');
 
 $where  = ["status = 'approved'", "listing_type = 'user_sale'"];
 $params = [];
-if ($f_brand !== '') { $where[] = "brand = ?";           $params[] = $f_brand; }
-if ($f_model !== '') { $where[] = "model LIKE ?";        $params[] = "%$f_model%"; }
+
+if ($f_model !== '') { $where[] = "model = ?";           $params[] = $f_model; }
 if ($f_min !== '' && is_numeric($f_min)) { $where[] = "asking_price >= ?"; $params[] = (float)$f_min; }
 if ($f_max !== '' && is_numeric($f_max)) { $where[] = "asking_price <= ?"; $params[] = (float)$f_max; }
 
@@ -19,23 +18,20 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $listings = $stmt->fetchAll();
 
-$brands = $pdo->query("SELECT DISTINCT brand FROM vehicle_listings WHERE status='approved' AND listing_type='user_sale' ORDER BY brand")->fetchAll(PDO::FETCH_COLUMN);
-
 function risk_badge(int $score, string $level): string {
     $colors = [
-        'Low'    => ['bg'=>'#dcfce7', 'fg'=>'#166534', 'icon'=>'✓'],
-        'Medium' => ['bg'=>'#fef3c7', 'fg'=>'#92400e', 'icon'=>'⚠'],
-        'High'   => ['bg'=>'#fee2e2', 'fg'=>'#991b1b', 'icon'=>'✕'],
+        'Low'    => ['bg'=>'#ecfdf5', 'fg'=>'#059669', 'border' => '#a7f3d0', 'icon'=>'✓'],
+        'Medium' => ['bg'=>'#fffbeb', 'fg'=>'#d97706', 'border' => '#fde68a', 'icon'=>'⚠'],
+        'High'   => ['bg'=>'#fef2f2', 'fg'=>'#dc2626', 'border' => '#fecaca', 'icon'=>'✕'],
     ];
-    $c = $colors[$level] ?? ['bg'=>'#e5e7eb', 'fg'=>'#374151', 'icon'=>'?'];
+    $c = $colors[$level] ?? ['bg'=>'#f3f4f6', 'fg'=>'#374151', 'border' => '#e5e7eb', 'icon'=>'?'];
     $safeLevel = htmlspecialchars($level);
     $safeScore = (int)$score;
     return '<span class="risk-badge" '
-         . 'style="background:' . $c['bg'] . '; color:' . $c['fg'] . ';" '
+         . 'style="background:' . $c['bg'] . '; color:' . $c['fg'] . '; border: 1px solid ' . $c['border'] . ';" '
          . 'data-level="' . $safeLevel . '" '
-         . 'data-score="' . $safeScore . '" '
-         . 'title="Risk Score: ' . $safeScore . '/100 (' . $safeLevel . ') — click to pin">'
-         . $c['icon'] . ' ' . $safeLevel . ' · ' . $safeScore . '/100'
+         . 'data-score="' . $safeScore . '">'
+         . $c['icon'] . ' Risk Score: ' . $safeLevel
          . '</span>';
 }
 
@@ -43,796 +39,643 @@ include 'header.php';
 ?>
 
 <style>
-    .listing-card {
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 20px;
-        background: var(--surface);
-        cursor: pointer;
-        transition: transform 0.15s, box-shadow 0.15s;
-        display: flex;
-        flex-direction: column;
-    }
-    .listing-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 12px 28px rgba(16, 20, 30, 0.12);
-    }
-    .risk-badge {
-        display: inline-block;
-        font-size: 11px;
-        font-weight: 700;
-        padding: 4px 10px;
-        border-radius: 20px;
-        letter-spacing: 0.02em;
-        cursor: pointer;
-        transition: transform 0.12s;
-        user-select: none;
-    }
-    .risk-badge:hover { transform: scale(1.05); }
-    .risk-badge.pinned {
-        outline: 2px solid #4f46e5;
-        outline-offset: 2px;
-    }
+    .marketplace-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
+    .marketplace-title { font-family: var(--font-display); font-size: 28px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px; margin: 0; }
+    .marketplace-sub { font-size: 14px; color: #64748b; margin-top: 4px; }
+    
+    .search-bar-container { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin-bottom: 32px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .search-select, .search-input { padding: 12px 16px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; font-family: var(--font-body); color: #0f172a; background: #f8fafc; outline: none; transition: border-color 0.2s; }
+    .search-select:focus, .search-input:focus { border-color: #2563eb; background: #ffffff; }
+    .search-btn { padding: 12px 24px; background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; transition: background 0.2s; }
+    .search-btn:hover { background: #1d4ed8; }
 
-    /* How-risk panel */
-    .how-risk-panel {
-        background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%);
-        border: 1px solid #fde68a;
-        border-radius: 10px;
-        margin-bottom: 20px;
-        overflow: hidden;
+    .listings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 24px; }
+    
+    .car-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease; display: flex; flex-direction: column; position: relative; }
+    .car-card:hover { transform: translateY(-4px); box-shadow: 0 12px 24px -8px rgba(0,0,0,0.15); border-color: #cbd5e1; }
+    .car-card::before {
+        content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+        background: linear-gradient(90deg, #6366f1, #2563eb);
+        z-index: 3; pointer-events: none; border-radius: 16px 16px 0 0; opacity: 0.85;
     }
-    .how-risk-panel summary {
-        padding: 16px 20px;
-        cursor: pointer;
-        font-weight: 700;
-        font-size: 14px;
-        color: #854d0e;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        list-style: none;
-        user-select: none;
-    }
-    .how-risk-panel summary::-webkit-details-marker { display: none; }
-    .how-risk-panel summary:hover { background: rgba(255,255,255,0.5); }
-    .how-risk-panel[open] summary { border-bottom: 1px solid #fde68a; }
-    .how-icon {
-        width: 24px; height: 24px;
-        border-radius: 50%;
-        background: #eab308;
-        color: white;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 13px;
-        font-weight: 800;
-        flex-shrink: 0;
-    }
-    .how-chevron {
-        margin-left: auto;
-        font-size: 11px;
-        font-weight: 500;
-        color: #ca8a04;
-        transition: transform 0.2s;
-    }
-    .how-risk-panel[open] .how-chevron { transform: rotate(180deg); }
-    .how-body { padding: 20px; }
-    .how-intro {
-        font-size: 13.5px;
-        color: #a16207;
-        margin-bottom: 18px;
-        line-height: 1.65;
-    }
-    .how-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-        gap: 12px;
-        margin-bottom: 16px;
-    }
-    .how-card {
-        background: white;
-        border: 1px solid #fef3c7;
-        border-radius: 8px;
-        padding: 14px 16px;
-    }
-    .how-card .hc-icon {
-        width: 28px; height: 28px;
-        border-radius: 6px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        margin-bottom: 8px;
-    }
-    .how-card .hc-title {
-        font-size: 13px;
-        font-weight: 700;
-        color: #111827;
-        margin-bottom: 4px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 8px;
-    }
-    .how-card .hc-pts {
-        font-family: var(--font-mono);
-        font-size: 10px;
-        font-weight: 700;
-        padding: 2px 7px;
-        border-radius: 10px;
-        white-space: nowrap;
-    }
-    .how-card .hc-desc {
-        font-size: 11.5px;
-        color: #6b7280;
-        line-height: 1.55;
-    }
-    .how-bands {
-        padding: 12px 14px;
-        background: white;
-        border-radius: 8px;
-        border: 1px solid #e5e7eb;
-        font-size: 12px;
-        color: #6b7280;
-        line-height: 1.7;
-    }
-    .how-bands strong { color: #374151; font-size: 12px; }
-    .how-band-pill {
-        display: inline-block;
-        padding: 2px 9px;
-        border-radius: 10px;
-        font-weight: 700;
-        font-size: 11px;
-        margin: 0 4px;
-    }
-    .how-note {
-        margin-top: 14px;
-        padding-top: 12px;
-        border-top: 1px dashed #fde68a;
-        font-size: 11.5px;
-        color: #ca8a04;
-        line-height: 1.5;
-    }
+    .car-card.card-verified::before { background: linear-gradient(90deg, #10b981, #059669); }
+    
+    .car-image-box { position: relative; width: 100%; height: 220px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    .car-image-box img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.4s ease; }
+    .car-card:hover .car-image-box img { transform: scale(1.05); }
+    
+    .car-placeholder { background-color: #f1f5f9; background-image: radial-gradient(#cbd5e1 1px, transparent 1px); background-size: 20px 20px; }
+    .placeholder-content { display: flex; flex-direction: column; align-items: center; justify-content: center; color: #94a3b8; gap: 8px; z-index: 2; }
+    .placeholder-content svg { width: 48px; height: 48px; opacity: 0.7; }
+    .placeholder-content span { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    /* ============ TOOLTIP ============ */
-    #risk-tooltip-global {
-        position: fixed;
-        background: #111827;
-        color: #fff;
-        border-radius: 12px;
-        padding: 14px;
-        width: 340px;
-        z-index: 99999;
-        box-shadow: 0 12px 36px rgba(0,0,0,0.4);
-        opacity: 0;
-        visibility: hidden;
-        transition: opacity 0.15s, visibility 0.15s;
-        pointer-events: none;
-    }
-    #risk-tooltip-global.show { opacity: 1; visibility: visible; }
-    .tt-title {
-        font-size: 11px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: #9ca3af;
-        margin-bottom: 10px;
-        padding-bottom: 10px;
-        border-bottom: 1px solid #374151;
-    }
-    .tt-current {
-        padding: 10px 12px;
-        background: rgba(255,255,255,0.08);
-        border-radius: 8px;
-        margin-bottom: 10px;
-        font-size: 12.5px;
-        color: #e5e7eb;
-        line-height: 1.5;
-        display: none;
-    }
-    .tt-current strong { font-weight: 800; }
-    .tt-row {
-        display: grid;
-        grid-template-columns: 62px 68px 1fr;
-        gap: 8px;
-        align-items: center;
-        padding: 8px 10px;
-        border-radius: 6px;
-        margin-bottom: 4px;
-        font-size: 12px;
-        line-height: 1.3;
-        border-left: 3px solid transparent;
-        transition: background 0.15s, border-color 0.15s;
-    }
-    .tt-row:last-of-type { margin-bottom: 0; }
-    .tt-range { font-family: var(--font-mono); font-weight: 600; color: #d1d5db; }
+    .image-overlay { position: absolute; inset: 0; background: linear-gradient(to top, rgba(15,23,42,0.8) 0%, transparent 40%); pointer-events: none; }
+    
+    .price-tag { position: absolute; bottom: 16px; right: 16px; background: #ffffff; color: #0f172a; font-family: var(--font-display); font-size: 20px; font-weight: 800; padding: 8px 16px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 2; letter-spacing: -0.5px; }
+    .save-btn { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; background: #ffffff; border-radius: 50%; display: flex; align-items: center; justify-content: center; z-index: 2; color: #64748b; transition: 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .save-btn:hover { color: #ef4444; transform: scale(1.1); }
+    
+    .car-content { padding: 20px; display: flex; flex-direction: column; flex: 1; }
+    .car-title { font-family: var(--font-display); font-size: 20px; font-weight: 800; color: #0f172a; line-height: 1.2; margin: 0 0 4px 0; }
+    .car-subtitle { font-size: 13px; color: #64748b; font-weight: 500; margin-bottom: 16px; }
+    
+    .spec-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .spec-pill { background: #f8fafc; color: #334155; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 8px; display: flex; align-items: center; gap: 6px; border: 1px solid #e2e8f0; }
+    .spec-pill svg { width: 14px; height: 14px; color: #94a3b8; }
+    
+    .badge-row { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    
+    .verify-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: 6px; letter-spacing: 0.02em; cursor: pointer; user-select: none; transition: transform 0.12s; }
+    .verify-badge:hover { transform: translateY(-1px); }
+    .verify-badge.pinned { outline: 2px solid #2563eb; outline-offset: 2px; }
+    .vb-verified { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+    .vb-unverified { background: #ffffff; color: #64748b; border: 1px solid #cbd5e1; }
+    .verify-badge svg { width: 14px; height: 14px; }
+
+    .risk-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: 6px; letter-spacing: 0.02em; cursor: pointer; user-select: none; transition: transform 0.12s; }
+    .risk-badge:hover { transform: translateY(-1px); }
+    .risk-badge.pinned { outline: 2px solid #2563eb; outline-offset: 2px; }
+
+    .car-footer { margin-top: auto; border-top: 1px dashed #e2e8f0; padding-top: 16px; display: flex; justify-content: space-between; align-items: center; }
+    .car-location { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #64748b; font-weight: 500; max-width: 60%; }
+    .car-location svg { width: 15px; height: 15px; color: #94a3b8; flex-shrink: 0; }
+    .view-btn { background: #f8fafc; color: #2563eb; border: 1px solid #e2e8f0; padding: 8px 16px; border-radius: 8px; font-size: 12.5px; font-weight: 700; transition: 0.2s; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .car-card:hover .view-btn { background: #2563eb; color: #ffffff; border-color: #2563eb; }
+
+    /* TOOLTIPS */
+    #info-tooltip-global { position: fixed; background: #0f172a; color: #fff; border-radius: 12px; padding: 16px; width: 320px; z-index: 99999; box-shadow: 0 12px 36px rgba(0,0,0,0.3); opacity: 0; visibility: hidden; transition: opacity 0.15s, visibility 0.15s; pointer-events: none; }
+    #info-tooltip-global.show { opacity: 1; visibility: visible; }
+    .tt-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #334155; }
+    .tt-current { padding: 10px 12px; background: rgba(255,255,255,0.05); border-radius: 8px; margin-bottom: 10px; font-size: 12.5px; color: #e2e8f0; line-height: 1.5; display: none; }
+    .tt-row { display: grid; grid-template-columns: 62px 68px 1fr; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 6px; margin-bottom: 4px; font-size: 12px; line-height: 1.3; border-left: 3px solid transparent; transition: background 0.15s, border-color 0.15s; }
+    .tt-range { font-family: var(--font-mono); font-weight: 600; color: #cbd5e1; }
     .tt-tier { font-weight: 700; padding: 3px 8px; border-radius: 10px; text-align: center; font-size: 11px; }
-    .tt-low  { background: #dcfce7; color: #166534; }
-    .tt-med  { background: #fef3c7; color: #92400e; }
-    .tt-high { background: #fee2e2; color: #991b1b; }
-    .tt-desc { color: #9ca3af; font-size: 11px; }
-
-    /* Active-row highlight — bright, tier-colored, cannot be missed */
-    .tt-row.tt-active {
-        font-weight: 700;
-    }
+    .tt-low { background: #ecfdf5; color: #047857; }
+    .tt-med { background: #fffbeb; color: #d97706; }
+    .tt-high { background: #fef2f2; color: #dc2626; }
+    .tt-desc { color: #94a3b8; font-size: 11px; }
+    .tt-row.tt-active { font-weight: 700; }
     .tt-row.tt-active .tt-range { color: #ffffff; }
-    .tt-row.tt-active .tt-desc { color: #e5e7eb; }
-    .tt-row[data-tier="Low"].tt-active {
-        background: rgba(34, 197, 94, 0.25);
-        border-left-color: #22c55e;
-        box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.4);
-    }
-    .tt-row[data-tier="Medium"].tt-active {
-        background: rgba(234, 179, 8, 0.30);
-        border-left-color: #eab308;
-        box-shadow: inset 0 0 0 1px rgba(234, 179, 8, 0.5);
-    }
-    .tt-row[data-tier="High"].tt-active {
-        background: rgba(239, 68, 68, 0.25);
-        border-left-color: #ef4444;
-        box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.4);
-    }
-    .tt-row.tt-active::before {
-        content: '▶';
-        position: absolute;
-        margin-left: -6px;
-        font-size: 9px;
-        color: #ffffff;
-    }
+    .tt-row.tt-active .tt-desc { color: #e2e8f0; }
+    .tt-row[data-tier="Low"].tt-active { background: rgba(34, 197, 94, 0.2); border-left-color: #22c55e; }
+    .tt-row[data-tier="Medium"].tt-active { background: rgba(234, 179, 8, 0.2); border-left-color: #eab308; }
+    .tt-row[data-tier="High"].tt-active { background: rgba(239, 68, 68, 0.2); border-left-color: #ef4444; }
 
-    .photo-placeholder {
-        width: 100%; min-height: 200px;
-        background: linear-gradient(135deg, #f3f4f6, #e5e7eb);
-        border-radius: 10px;
-        display: flex; flex-direction: column;
-        align-items: center; justify-content: center;
-        color: #9ca3af; gap: 10px;
-    }
-    .photo-placeholder svg { width: 56px; height: 56px; opacity: 0.4; }
-
-    .modal-overlay {
-        display: none; position: fixed; inset: 0;
-        background: rgba(17, 24, 39, 0.75); z-index: 1000;
-        align-items: center; justify-content: center;
-        padding: 20px; animation: fadeIn 0.2s ease;
-    }
+    /* MODAL */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center; padding: 20px; }
     .modal-overlay.show { display: flex; }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-    .modal-content {
-        background: #fff; border-radius: 16px; max-width: 900px; width: 100%;
-        max-height: 92vh; overflow-y: auto; position: relative;
-        animation: slideUp 0.25s ease; box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-    }
-    .modal-close {
-        position: absolute; top: 16px; right: 16px; width: 36px; height: 36px;
-        border-radius: 50%; background: rgba(255,255,255,0.95); border: 1px solid #e5e7eb;
-        cursor: pointer; display: flex; align-items: center; justify-content: center;
-        font-size: 22px; line-height: 1; color: #374151; z-index: 10;
-    }
-    .modal-close:hover { background: #f3f4f6; }
-    .modal-header-photo {
-        height: 240px; border-radius: 16px 16px 0 0;
-        background: linear-gradient(135deg, #f3f4f6, #e5e7eb);
-        display: flex; align-items: center; justify-content: center;
-        color: #9ca3af; flex-direction: column; gap: 12px;
-        border-bottom: 1px solid #e5e7eb;
-    }
-    .modal-header-photo svg { width: 72px; height: 72px; opacity: 0.5; }
-    .modal-body { padding: 24px; }
-    .modal-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 20px; }
-    .info-box { background: #f9fafb; padding: 12px 14px; border-radius: 8px; border: 1px solid #e5e7eb; }
-    .info-box .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; font-weight: 700; margin-bottom: 4px; }
-    .info-box .val { font-size: 14px; font-weight: 600; color: #111827; }
-    .risk-section { background: #fafafa; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; margin-bottom: 20px; }
-    .flag-item { font-size: 13px; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px; background: #fff; border-left: 3px solid #f59e0b; color: #374151; line-height: 1.5; }
+    .modal-content { background: #fff; border-radius: 16px; max-width: 900px; width: 100%; max-height: 92vh; overflow-y: auto; position: relative; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }
+    .modal-close { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.95); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 22px; color: #64748b; z-index: 20; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+    .modal-close:hover { background: #fff; color: #0f172a; }
+
+    .modal-hero { height: 320px; border-radius: 16px 16px 0 0; overflow: hidden; position: relative; }
+    .modal-hero img { width: 100%; height: 100%; object-fit: cover; }
+    .modal-thumb-strip { display: flex; gap: 8px; padding: 12px 32px 0; overflow-x: auto; }
+    .modal-thumb { width: 64px; height: 64px; border-radius: 6px; object-fit: cover; cursor: pointer; border: 2px solid transparent; flex-shrink: 0; transition: border-color 0.15s, opacity 0.15s; opacity: 0.7; }
+    .modal-thumb:hover { opacity: 1; }
+    .modal-thumb.active { border-color: #2563eb; opacity: 1; }
+    
+    .modal-body { padding: 24px 32px 32px; }
+    
+    .modal-title-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
+    .modal-title { font-family: var(--font-display); font-size: 26px; font-weight: 800; margin-bottom: 6px; color: #0f172a; }
+    .modal-subtitle { font-size: 14px; color: #64748b; font-weight: 500; }
+    .modal-price-box { text-align: right; }
+    .modal-price-lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 4px; font-weight: 700; }
+    .modal-price { font-size: 30px; font-weight: 800; color: #2563eb; font-family: var(--font-display); letter-spacing: -0.5px; }
+    .modal-price-meta { font-size: 12px; color: #64748b; margin-top: 2px; }
+
+    .risk-panel { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; }
+    .risk-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .risk-panel-title { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #0f172a; }
+    .flag-item { font-size: 12.5px; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px; background: #fff; border-left: 3px solid #f59e0b; color: #334155; line-height: 1.5; }
     .flag-item:last-child { margin-bottom: 0; }
-    @media (max-width: 640px) {
-        .modal-grid { grid-template-columns: 1fr; }
-        .modal-header-photo { height: 180px; }
-        #risk-tooltip-global { width: 300px; }
-        .how-grid { grid-template-columns: 1fr; }
+
+    .modal-section-title { font-size: 13px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.06em; margin: 22px 0 12px; padding-top: 18px; border-top: 1px solid #e2e8f0; }
+    .modal-section-title:first-of-type { margin-top: 0; padding-top: 0; border-top: none; }
+
+    .modal-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .modal-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .modal-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+
+    .info-box { background: #f8fafc; padding: 12px 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
+    .info-box .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; font-weight: 700; margin-bottom: 4px; }
+    .info-box .val { font-size: 13.5px; font-weight: 600; color: #0f172a; line-height: 1.4; }
+
+    .pill-yes { display: inline-flex; align-items: center; gap: 4px; background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; }
+    .pill-no { display: inline-flex; align-items: center; gap: 4px; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; }
+    .pill-neutral { display: inline-flex; align-items: center; gap: 4px; background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; }
+
+    .notes-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; font-size: 13.5px; color: #334155; line-height: 1.6; margin-bottom: 10px; }
+    .notes-box .notes-lbl { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; font-weight: 700; margin-bottom: 4px; }
+
+    @media (max-width: 640px) { 
+        .marketplace-header { flex-direction: column; align-items: flex-start; }
+        .search-bar-container { flex-direction: column; align-items: stretch; }
+        .search-select, .search-input, .search-btn { width: 100%; }
+        .modal-grid { grid-template-columns: 1fr; } 
+        .modal-grid-3, .modal-grid-4 { grid-template-columns: 1fr 1fr; }
+        #info-tooltip-global { width: 280px; }
+        .modal-body { padding: 20px; }
+        .modal-hero { height: 220px; }
+        .modal-price-box { text-align: left; }
     }
 </style>
 
-<div class="view" style="display: block;">
-  <div class="panel">
-    <div class="panel-head">
-      <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="var(--indigo)" stroke-width="2"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg></div>
-      <h3>Cars For Sale</h3>
+<div class="view" style="display: block; width: 100%; max-width: 1400px; margin: 0 auto;">
+  
+  <div class="marketplace-header">
+    <div>
+      <h1 class="marketplace-title">Find your next car</h1>
+      <div class="marketplace-sub">Browse <?php echo count($listings); ?> trusted listings from verified sellers.</div>
     </div>
-    <div class="panel-sub">Browse approved listings. Hover or click the risk badge to see the score scale.</div>
+  </div>
 
-    <!-- ============ HOW RISK ASSESSMENT WORKS ============ -->
-    <details class="how-risk-panel">
-      <summary>
-        <span class="how-icon">?</span>
-        How risk assessment works
-        <span class="how-chevron">▼ Click to expand</span>
-      </summary>
-      <div class="how-body">
-        <p class="how-intro">
-          Every listing is scored <strong>0–100</strong> by an automated heuristic engine before appearing here.
-          The score combines five weighted risk factors — <strong>higher score = riskier listing</strong>.
-          Listings scoring 60+ are automatically rejected and never reach this page.
-        </p>
+  <form method="GET" class="search-bar-container">
+    <select name="model" class="search-select" style="flex: 1; min-width: 200px;">
+      <option value="">All Toyota Models</option>
+      <option value="Vios" <?php echo $f_model === 'Vios' ? 'selected' : ''; ?>>Vios</option>
+      <option value="Innova" <?php echo $f_model === 'Innova' ? 'selected' : ''; ?>>Innova</option>
+      <option value="Fortuner" <?php echo $f_model === 'Fortuner' ? 'selected' : ''; ?>>Fortuner</option>
+      <option value="Hilux" <?php echo $f_model === 'Hilux' ? 'selected' : ''; ?>>Hilux</option>
+      <option value="Wigo" <?php echo $f_model === 'Wigo' ? 'selected' : ''; ?>>Wigo</option>
+      <option value="Avanza" <?php echo $f_model === 'Avanza' ? 'selected' : ''; ?>>Avanza</option>
+    </select>
+    <input type="number" name="min_price" placeholder="Min Price (₱)" value="<?php echo htmlspecialchars($f_min); ?>" class="search-input" style="width: 150px;">
+    <input type="number" name="max_price" placeholder="Max Price (₱)" value="<?php echo htmlspecialchars($f_max); ?>" class="search-input" style="width: 150px;">
+    <button type="submit" class="search-btn">Search</button>
+    <?php if ($f_model || $f_min || $f_max): ?>
+      <a href="browse.php" style="font-size: 13px; color: #64748b; text-decoration: underline; margin-left: 8px;">Clear Filters</a>
+    <?php endif; ?>
+  </form>
 
-        <div class="how-grid">
-          <div class="how-card">
-            <div class="hc-icon" style="background:#eef2ff; color:#4f46e5;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;">
-                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-              </svg>
-            </div>
-            <div class="hc-title">
-              Price vs Market
-              <span class="hc-pts" style="background:#eef2ff; color:#4f46e5;">up to +40</span>
-            </div>
-            <div class="hc-desc">Compares the asking price to the average of comparable listings in the same region. Flags scams (way too cheap) and overpricing (way too expensive).</div>
-          </div>
-
-          <div class="how-card">
-            <div class="hc-icon" style="background:#fef3c7; color:#92400e;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;">
-                <path d="M3 17l6-6 4 4 8-8"/>
-              </svg>
-            </div>
-            <div class="hc-title">
-              Mileage Anomaly
-              <span class="hc-pts" style="background:#fef3c7; color:#92400e;">up to +25</span>
-            </div>
-            <div class="hc-desc">Calculates km/year and flags extreme cases — under 500 km/yr (possible odometer rollback) or over 40,000 km/yr (heavy commercial use).</div>
-          </div>
-
-          <div class="how-card">
-            <div class="hc-icon" style="background:#ecfdf5; color:#059669;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;">
-                <path d="M2 12c2-2 4-2 6 0s4 2 6 0 4-2 6 0M2 17c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>
-              </svg>
-            </div>
-            <div class="hc-title">
-              Flood Risk
-              <span class="hc-pts" style="background:#ecfdf5; color:#059669;">up to +50</span>
-            </div>
-            <div class="hc-desc">Matches the location (city / district / barangay) against PAGASA, Project NOAH, and DENR-MGB flood hotspots. Also adds points if the seller declares flood damage.</div>
-          </div>
-
-          <div class="how-card">
-            <div class="hc-icon" style="background:#fff7ed; color:#ea580c;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;">
-                <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
-              </svg>
-            </div>
-            <div class="hc-title">
-              Age &amp; Accident
-              <span class="hc-pts" style="background:#fff7ed; color:#ea580c;">up to +30</span>
-            </div>
-            <div class="hc-desc">Vehicles 15+ years old carry elevated registration/maintenance risk. Major accident history adds a significant penalty.</div>
-          </div>
-
-          <div class="how-card">
-            <div class="hc-icon" style="background:#fef2f2; color:#dc2626;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;">
-                <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>
-              </svg>
-            </div>
-            <div class="hc-title">
-              Data Consistency
-              <span class="hc-pts" style="background:#fef2f2; color:#dc2626;">up to +15</span>
-            </div>
-            <div class="hc-desc">Validates that the year/model combo actually exists. Flags impossible combinations (e.g. 2024 Vios with 2015 features) or unknown models.</div>
-          </div>
-
-          <div class="how-card" style="background: linear-gradient(135deg, #f0fdf4, #ecfdf5); border-color: #86efac;">
-            <div class="hc-icon" style="background:#dcfce7; color:#16a34a;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-            </div>
-            <div class="hc-title" style="color:#065f46;">
-              Why it matters
-            </div>
-            <div class="hc-desc" style="color:#166534;">Protects buyers from scams, hidden flood damage, and odometer tampering. Low-risk listings (0–29) auto-proceed. Medium-risk (30–59) get manual review before approval.</div>
-          </div>
-        </div>
-
-        <div class="how-bands">
-          <strong>Score bands:</strong>
-          <span class="how-band-pill" style="background:#dcfce7; color:#166534;">0–29 · Low</span>
-          Proceed to ML model
-          <span class="how-band-pill" style="background:#fef3c7; color:#92400e; margin-left: 12px;">30–59 · Medium</span>
-          Flag for manual review
-          <span class="how-band-pill" style="background:#fee2e2; color:#991b1b; margin-left: 12px;">60–100 · High</span>
-          Reject listing
-
-          <div class="how-note">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;display:inline-block;margin-right:4px;">
-              <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/>
-            </svg>
-            <strong>Tip:</strong> Hover or click any risk badge on a listing card to see the full score scale with the current tier highlighted.
-          </div>
-        </div>
+  <div class="listings-grid">
+    <?php if (empty($listings)): ?>
+      <div style="grid-column: 1 / -1; text-align: center; padding: 80px 20px; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" style="width:64px;height:64px;margin-bottom:16px;"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+        <h4 style="color: #0f172a; margin-bottom: 8px; font-size: 18px;">No vehicles found</h4>
+        <p style="margin-bottom: 24px; color: #64748b;">Try adjusting your search filters.</p>
+        <a href="browse.php" style="background: #2563eb; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600;">Clear Search</a>
       </div>
-    </details>
+    <?php else: foreach ($listings as $idx => $row): 
+        $has_photo = !empty($row['photo_front']);
+        $img_src = $has_photo ? 'uploads/' . htmlspecialchars($row['photo_front']) : '';
+    ?>
+      <div class="car-card <?php echo (($row['verification_status'] ?? '') === 'mechanic_verified') ? 'card-verified' : ''; ?>" onclick="openListingModal(<?php echo $idx; ?>)">
+        
+        <div class="car-image-box <?php echo !$has_photo ? 'car-placeholder' : ''; ?>">
+          
+          <?php if ($has_photo): ?>
+            <img src="<?php echo $img_src; ?>" alt="<?php echo htmlspecialchars($row['brand'] . ' ' . $row['model']); ?>">
+          <?php else: ?>
+            <div class="placeholder-content">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12l1.5-5A2 2 0 016.4 5.5h11.2A2 2 0 0119.5 7L21 12M3 12v5a1 1 0 001 1h1a1 1 0 001-1v-1h12v1a1 1 0 001 1h1a1 1 0 001-1v-5M3 12h18M6.5 15.5h.01M17.5 15.5h.01"/></svg>
+              <span>Photos Pending</span>
+            </div>
+          <?php endif; ?>
 
-    <!-- Filters -->
-    <form method="GET" style="background: var(--paper); padding: 16px; border-radius: 8px; margin-bottom: 24px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; border: 1px solid var(--border);">
-      <select name="brand" style="padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; outline: none;">
-        <option value="">All Brands</option>
-        <?php foreach ($brands as $b): ?>
-          <option value="<?php echo htmlspecialchars($b); ?>" <?php echo $b === $f_brand ? 'selected' : ''; ?>><?php echo htmlspecialchars($b); ?></option>
-        <?php endforeach; ?>
-      </select>
-      <input type="text" name="model" placeholder="Search model..." value="<?php echo htmlspecialchars($f_model); ?>" style="padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; outline: none; flex: 1; min-width: 150px;">
-      <input type="number" name="min_price" placeholder="Min Price ₱" value="<?php echo htmlspecialchars($f_min); ?>" style="padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; outline: none; width: 130px;">
-      <input type="number" name="max_price" placeholder="Max Price ₱" value="<?php echo htmlspecialchars($f_max); ?>" style="padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; outline: none; width: 130px;">
-      <button type="submit" style="padding: 9px 18px; background: var(--indigo); color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer;">Search</button>
-      <?php if ($f_brand || $f_model || $f_min || $f_max): ?>
-        <a href="browse.php" style="font-size: 13px; color: var(--text-muted); text-decoration: underline;">Clear</a>
-      <?php endif; ?>
-    </form>
-
-    <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
-      <?php echo count($listings); ?> listing<?php echo count($listings) === 1 ? '' : 's'; ?> found
-    </div>
-
-    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px;">
-      <?php if (empty($listings)): ?>
-        <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: var(--text-faint);">
-          <div style="margin-bottom: 16px; color: #d1d5db;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:64px;height:64px;">
-              <path d="M3 12l1.5-5A2 2 0 016.4 5.5h11.2A2 2 0 0119.5 7L21 12M3 12v5a1 1 0 001 1h1a1 1 0 001-1v-1h12v1a1 1 0 001 1h1a1 1 0 001-1v-5M3 12h18M6.5 15.5h.01M17.5 15.5h.01"/>
-            </svg>
+          <div class="image-overlay"></div>
+          <div class="price-tag">₱<?php echo number_format($row['asking_price']); ?></div>
+          <div class="save-btn" onclick="event.stopPropagation();">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
           </div>
-          <h4 style="color: var(--text); margin-bottom: 8px;">No cars for sale yet</h4>
-          <p style="margin-bottom: 16px;">Be the first to list your vehicle.</p>
-          <a href="submit_listing.php" class="predict-btn" style="display: inline-flex; text-decoration: none; padding: 11px 22px;">Sell Your Car</a>
         </div>
-      <?php else: foreach ($listings as $idx => $row): ?>
-        <div class="listing-card" onclick="openListingModal(<?php echo $idx; ?>)">
 
-          <div class="photo-placeholder" style="margin-bottom: 14px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <rect x="3" y="6" width="18" height="14" rx="2"/>
-              <circle cx="12" cy="13" r="3"/>
-              <path d="M8 6l1.5-2h5L16 6"/>
-            </svg>
-            <span style="font-size: 12px; font-weight: 500;">No Photo Available</span>
-          </div>
+        <div class="car-content">
+          <h3 class="car-title"><?php echo htmlspecialchars($row['brand'] . ' ' . $row['model']); ?></h3>
+          <div class="car-subtitle"><?php echo htmlspecialchars($row['color']); ?> • <?php echo htmlspecialchars($row['fuel_type']); ?></div>
 
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; gap: 8px;">
-            <div style="flex: 1; min-width: 0;">
-              <h4 style="font-family: var(--font-display); font-size: 16px; margin-bottom: 4px;">
-                <?php echo htmlspecialchars($row['brand'] . ' ' . $row['model']); ?>
-              </h4>
-              <div style="font-size: 12px; color: var(--text-muted);">
-                <?php echo (int)$row['year_manufactured']; ?> •
-                <?php echo number_format($row['mileage']); ?> km •
-                <?php echo htmlspecialchars($row['transmission']); ?>
-              </div>
-            </div>
-            <div class="badge" style="background: var(--teal-soft); color: var(--teal); font-size: 13px; font-weight: 700; padding: 5px 10px; white-space: nowrap;">
-              ₱<?php echo number_format($row['asking_price']); ?>
-            </div>
-          </div>
-
-          <div style="margin-bottom: 12px;" onclick="event.stopPropagation();">
-            <?php
-              if (!empty($row['risk_level'])) {
-                  echo risk_badge((int)$row['risk_score'], $row['risk_level']);
-              } else {
-                  echo '<span class="risk-badge" '
-                     . 'style="background:#f3f4f6; color:#6b7280;" '
-                     . 'data-level="" '
-                     . 'data-score="0" '
-                     . 'title="Not evaluated — click to learn more">'
-                     . 'Not evaluated</span>';
-              }
-            ?>
-          </div>
-
-          <div style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 13px; height: 13px; flex-shrink: 0;">
-              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
-              <circle cx="12" cy="10" r="3"/>
-            </svg>
-            <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-              <?php
-                $loc_parts = array_filter([$row['city'] ?? '', $row['district'] ?? '', $row['barangay'] ?? '']);
-                echo htmlspecialchars(implode(', ', $loc_parts)) ?: 'N/A';
-              ?>
+          <div class="spec-pills">
+            <span class="spec-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <?php echo $row['year_manufactured']; ?>
+            </span>
+            <span class="spec-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <?php echo number_format($row['mileage']); ?> km
+            </span>
+            <span class="spec-pill">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              <?php echo htmlspecialchars($row['transmission']); ?>
             </span>
           </div>
 
-          <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); font-size: 11.5px; color: var(--indigo); font-weight: 600; display: flex; align-items: center; gap: 6px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 13px; height: 13px;">
-              <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>
-            </svg>
-            Click for full details
+          <div class="badge-row" onclick="event.stopPropagation();">
+            <?php if (($row['verification_status'] ?? '') === 'mechanic_verified'): ?>
+              <span class="verify-badge vb-verified" data-status="verified">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2.5"/></svg>
+                Mechanic Verified
+              </span>
+            <?php else: ?>
+              <span class="verify-badge vb-unverified" data-status="unverified">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                Unverified
+              </span>
+              <?php if (!empty($row['risk_level'])) echo risk_badge((int)$row['risk_score'], $row['risk_level']); ?>
+            <?php endif; ?>
+          </div>
+
+          <div class="car-footer">
+            <div class="car-location">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              <span><?php echo htmlspecialchars($row['city'] ?: 'N/A'); ?></span>
+            </div>
+            <div class="view-btn" onclick="event.stopPropagation(); openListingModal(<?php echo $idx; ?>)">
+              View
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
           </div>
         </div>
-      <?php endforeach; endif; ?>
-    </div>
+      </div>
+    <?php endforeach; endif; ?>
   </div>
 </div>
 
-<!-- Global tooltip -->
-<div id="risk-tooltip-global" role="tooltip">
-  <div class="tt-title">Risk Score Scale</div>
-  <div class="tt-current" id="tt-current"></div>
-  <div class="tt-row" data-tier="Low">
-    <span class="tt-range">0 – 29</span>
-    <span class="tt-tier tt-low">Low</span>
-    <span class="tt-desc">Safe — proceed</span>
-  </div>
-  <div class="tt-row" data-tier="Medium">
-    <span class="tt-range">30 – 59</span>
-    <span class="tt-tier tt-med">Medium</span>
-    <span class="tt-desc">Manual review</span>
-  </div>
-  <div class="tt-row" data-tier="High">
-    <span class="tt-range">60 – 100</span>
-    <span class="tt-tier tt-high">High</span>
-    <span class="tt-desc">Reject listing</span>
-  </div>
+<!-- Tooltip -->
+<div id="info-tooltip-global" role="tooltip">
+  <div id="tt-content"></div>
 </div>
 
 <!-- Modal -->
 <div class="modal-overlay" id="listingModal" onclick="if(event.target===this)closeModal()">
   <div class="modal-content">
     <button class="modal-close" onclick="closeModal()">×</button>
-    <div class="modal-header-photo">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <rect x="3" y="6" width="18" height="14" rx="2"/>
-        <circle cx="12" cy="13" r="3"/>
-        <path d="M8 6l1.5-2h5L16 6"/>
-      </svg>
-      <span style="font-size: 13px; font-weight: 500;">No Photo Available</span>
-    </div>
-    <div class="modal-body">
-      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; gap: 12px; flex-wrap: wrap;">
-        <div>
-          <h2 id="m-title" style="font-family: var(--font-display); font-size: 24px; font-weight: 800; margin-bottom: 6px;"></h2>
-          <div id="m-subtitle" style="font-size: 14px; color: var(--text-muted);"></div>
+    
+    <div id="m-image-box" class="car-image-box modal-hero">
+        <img id="m-img" src="" style="display: none;">
+        <div id="m-placeholder" class="placeholder-content" style="display: none;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12l1.5-5A2 2 0 016.4 5.5h11.2A2 2 0 0119.5 7L21 12M3 12v5a1 1 0 001 1h1a1 1 0 001-1v-1h12v1a1 1 0 001 1h1a1 1 0 001-1v-5M3 12h18M6.5 15.5h.01M17.5 15.5h.01"/></svg>
+            <span>Photos Pending</span>
         </div>
-        <div style="text-align: right;">
-          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); margin-bottom: 4px;">Asking Price</div>
-          <div id="m-price" style="font-size: 28px; font-weight: 800; color: var(--teal); font-family: var(--font-mono);"></div>
+    </div>
+    
+    <div id="m-thumb-strip" class="modal-thumb-strip"></div>
+
+    <div class="modal-body">
+      <div class="modal-title-row">
+        <div>
+          <h2 id="m-title" class="modal-title"></h2>
+          <div id="m-subtitle" class="modal-subtitle"></div>
+        </div>
+        <div class="modal-price-box">
+          <div class="modal-price-lbl">Asking Price</div>
+          <div id="m-price" class="modal-price"></div>
+          <div id="m-price-meta" class="modal-price-meta"></div>
         </div>
       </div>
-      <div class="risk-section">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-          <div style="font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text);">Risk Assessment</div>
+      
+      <div id="m-risk-section" class="risk-panel">
+        <div class="risk-panel-head">
+          <div class="risk-panel-title">Risk Assessment</div>
           <div id="m-risk-badge"></div>
         </div>
         <div id="m-risk-flags"></div>
-        <div id="m-risk-rec" style="margin-top: 12px; font-size: 12.5px; color: var(--text-muted); font-style: italic;"></div>
       </div>
-      <div class="modal-grid">
+
+      <!-- SPECIFICATIONS -->
+      <div class="modal-section-title">Specifications</div>
+      <div class="modal-grid-3">
         <div class="info-box"><div class="lbl">Year</div><div class="val" id="m-year"></div></div>
         <div class="info-box"><div class="lbl">Mileage</div><div class="val" id="m-mileage"></div></div>
+        <div class="info-box"><div class="lbl">Color</div><div class="val" id="m-color"></div></div>
         <div class="info-box"><div class="lbl">Transmission</div><div class="val" id="m-trans"></div></div>
         <div class="info-box"><div class="lbl">Fuel Type</div><div class="val" id="m-fuel"></div></div>
-        <div class="info-box"><div class="lbl">Color</div><div class="val" id="m-color"></div></div>
-        <div class="info-box"><div class="lbl">Condition</div><div class="val" id="m-cond"></div></div>
-        <div class="info-box"><div class="lbl">Registration</div><div class="val" id="m-reg"></div></div>
-        <div class="info-box"><div class="lbl">Price</div><div class="val" id="m-negotiable"></div></div>
+        <div class="info-box"><div class="lbl">Modifications</div><div class="val" id="m-mods"></div></div>
       </div>
-      <h3 style="font-size: 14px; font-weight: 700; margin-bottom: 12px; color: var(--text);">Location</h3>
-      <div class="info-box" style="margin-bottom: 20px;">
-        <div class="val" id="m-location" style="font-size: 14px;"></div>
-        <div class="lbl" id="m-landmark" style="margin-top: 6px; text-transform: none; letter-spacing: 0;"></div>
+
+      <!-- CONDITION & HISTORY -->
+      <div class="modal-section-title">Condition &amp; History</div>
+      <div class="modal-grid-4">
+        <div class="info-box"><div class="lbl">First Owner</div><div class="val" id="m-first-owner"></div></div>
+        <div class="info-box"><div class="lbl">Maintenance</div><div class="val" id="m-maint"></div></div>
+        <div class="info-box"><div class="lbl">Accident History</div><div class="val" id="m-accident"></div></div>
+        <div class="info-box"><div class="lbl">Flooded</div><div class="val" id="m-flooded"></div></div>
       </div>
-      <h3 style="font-size: 14px; font-weight: 700; margin-bottom: 12px; color: var(--text);">Seller</h3>
+
+      <!-- LEGAL DOCUMENTS -->
+      <div class="modal-section-title">Legal Documents</div>
+      <div class="modal-grid-4">
+        <div class="info-box"><div class="lbl">LTO Status</div><div class="val" id="m-lto"></div></div>
+        <div class="info-box"><div class="lbl">OR / CR</div><div class="val" id="m-orcr"></div></div>
+        <div class="info-box"><div class="lbl">Fully Paid</div><div class="val" id="m-paid"></div></div>
+        <div class="info-box"><div class="lbl">Deed of Sale</div><div class="val" id="m-deed"></div></div>
+      </div>
+
+      <!-- PRICING & PAYMENT -->
+      <div class="modal-section-title">Pricing &amp; Payment</div>
+      <div class="modal-grid-3">
+        <div class="info-box"><div class="lbl">Negotiability</div><div class="val" id="m-nego"></div></div>
+        <div class="info-box"><div class="lbl">Trade-In</div><div class="val" id="m-trade"></div></div>
+        <div class="info-box"><div class="lbl">Warranty</div><div class="val" id="m-warranty"></div></div>
+      </div>
+      <div class="modal-grid" style="margin-top:12px;">
+        <div class="info-box" style="grid-column: span 2;"><div class="lbl">Accepted Payment Methods</div><div class="val" id="m-payment"></div></div>
+      </div>
+
+      <!-- LOCATION -->
+      <div class="modal-section-title">Location</div>
+      <div class="modal-grid">
+        <div class="info-box"><div class="lbl">City / Municipality</div><div class="val" id="m-city"></div></div>
+        <div class="info-box"><div class="lbl">Barangay</div><div class="val" id="m-barangay"></div></div>
+      </div>
+      <div class="info-box" style="margin-top:12px;"><div class="lbl">Full Address</div><div class="val" id="m-location"></div></div>
+
+      <!-- SELLER -->
+      <div class="modal-section-title">Seller Contact</div>
       <div class="modal-grid">
         <div class="info-box"><div class="lbl">Name</div><div class="val" id="m-seller"></div></div>
-        <div class="info-box"><div class="lbl">Contact</div><div class="val" id="m-contact" style="font-family: var(--font-mono); color: var(--indigo);"></div></div>
+        <div class="info-box"><div class="lbl">Contact Number</div><div class="val" id="m-contact" style="font-family: var(--font-mono); color: #2563eb;"></div></div>
       </div>
-      <div id="m-rfs-wrap" style="margin-top: 16px; display: none;">
-        <h3 style="font-size: 14px; font-weight: 700; margin-bottom: 8px; color: var(--text);">Reason for Selling</h3>
-        <div class="info-box"><div class="val" id="m-rfs" style="font-weight: 400; line-height: 1.5;"></div></div>
+
+      <!-- NOTES (conditional) -->
+      <div id="m-notes-section" style="display:none;">
+        <div class="modal-section-title">Seller Notes</div>
+        <div id="m-notes-wrap"></div>
       </div>
-      <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--text-faint); text-align: center;" id="m-listed"></div>
     </div>
   </div>
 </div>
 
 <script>
 const LISTINGS = <?php echo json_encode($listings, JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+const tooltip = document.getElementById('info-tooltip-global');
+const ttContent = document.getElementById('tt-content');
+let pinnedTarget = null;
 
-// ============ TOOLTIP — hover AND click-to-pin (Event Delegation) ============
-const tooltip = document.getElementById('risk-tooltip-global');
-const currentEl = document.getElementById('tt-current');
-let pinnedBadge = null;
+/* ============ HELPERS ============ */
+function yesNoPill(v) {
+    const s = String(v ?? '').trim();
+    if (/^(yes|true|1)$/i.test(s)) return '<span class="pill-yes">✓ Yes</span>';
+    if (/^(no|false|0)$/i.test(s)) return '<span class="pill-no">✕ No</span>';
+    if (s === '') return '<span class="pill-neutral">—</span>';
+    return '<span class="pill-neutral">' + esc(s) + '</span>';
+}
+function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function setText(id, val, fallback = 'N/A') {
+    document.getElementById(id).textContent = (val === null || val === undefined || val === '') ? fallback : val;
+}
+function setHtml(id, html) {
+    document.getElementById(id).innerHTML = html;
+}
 
-function showTooltip(badge) {
-    const level = (badge.getAttribute('data-level') || '').trim();
-    const score = (badge.getAttribute('data-score') || '0').trim();
+/* ============ TOOLTIPS ============ */
+function buildRiskTooltip(level, score) {
+    let bg = 'rgba(255,255,255,0.08)', fg = '#e2e8f0';
+    if (level === 'Low') { bg = 'rgba(34, 197, 94, 0.20)'; fg = '#4ade80'; }
+    if (level === 'Medium') { bg = 'rgba(234, 179, 8, 0.20)'; fg = '#fbbf24'; }
+    if (level === 'High') { bg = 'rgba(239, 68, 68, 0.20)'; fg = '#f87171'; }
 
-    tooltip.querySelectorAll('.tt-row').forEach(r => r.classList.remove('tt-active'));
+    return `
+        <div class="tt-title">Risk Score Scale</div>
+        <div class="tt-current" style="display:block; background:${bg}; color:#e2e8f0;">
+            ▶ CURRENT: <strong style="color:${fg};">${esc(level.toUpperCase())}</strong> · ${score}/100
+        </div>
+        <div class="tt-row ${level==='Low'?'tt-active':''}" data-tier="Low"><span class="tt-range">0 – 29</span><span class="tt-tier tt-low">Low</span><span class="tt-desc">Safe</span></div>
+        <div class="tt-row ${level==='Medium'?'tt-active':''}" data-tier="Medium"><span class="tt-range">30 – 59</span><span class="tt-tier tt-med">Medium</span><span class="tt-desc">Review</span></div>
+        <div class="tt-row ${level==='High'?'tt-active':''}" data-tier="High"><span class="tt-range">60 – 100</span><span class="tt-tier tt-high">High</span><span class="tt-desc">Reject</span></div>
+    `;
+}
 
-    if (!level || level.toLowerCase() === 'not evaluated') {
-        currentEl.innerHTML = 'This listing has not been risk-scored yet.';
-        currentEl.style.display = 'block';
-        currentEl.style.background = 'rgba(239, 68, 68, 0.15)';
-        currentEl.style.color = '#fca5a5';
+function buildVerifyTooltip(status) {
+    if (status === 'verified') {
+        return `<div class="tt-title" style="color:#4ade80;">✓ Mechanic Verified</div><div style="font-size: 12.5px; line-height: 1.6; color: #e2e8f0;">A real mechanic has physically inspected this vehicle. The risk score is hidden because human inspection is trusted.</div>`;
     } else {
-        const activeRow = Array.from(tooltip.querySelectorAll('.tt-row')).find(
-            r => (r.getAttribute('data-tier') || '').toLowerCase() === level.toLowerCase()
-        );
-        if (activeRow) activeRow.classList.add('tt-active');
-
-        const tierColors = {
-            'low':    { bg: 'rgba(34, 197, 94, 0.20)',  fg: '#4ade80' },
-            'medium': { bg: 'rgba(234, 179, 8, 0.20)',  fg: '#fbbf24' },
-            'high':   { bg: 'rgba(239, 68, 68, 0.20)',  fg: '#f87171' }
-        };
-        const c = tierColors[level.toLowerCase()] || { bg: 'rgba(255,255,255,0.08)', fg: '#e5e7eb' };
-
-        currentEl.innerHTML = '▶ YOUR LISTING: <strong style="color:' + c.fg + ';">' + level.toUpperCase() + '</strong> · ' + score + '/100';
-        currentEl.style.background = c.bg;
-        currentEl.style.color = '#e5e7eb';
-        currentEl.style.display = 'block';
+        return `<div class="tt-title" style="color:#94a3b8;">Unverified Listing</div><div style="font-size: 12.5px; line-height: 1.6; color: #e2e8f0;">This data was self-reported. Because we haven't inspected it, the risk score is displayed to warn you of potential issues.</div>`;
     }
+}
 
+function showTooltip(target, contentHtml) {
+    ttContent.innerHTML = contentHtml;
     tooltip.classList.add('show');
-
-    // Position above or below the badge
-    const rect = badge.getBoundingClientRect();
-    const ttWidth = tooltip.offsetWidth;
+    const rect = target.getBoundingClientRect();
     let left = rect.left;
-    if (left + ttWidth > window.innerWidth - 10) left = window.innerWidth - ttWidth - 10;
+    if (left + tooltip.offsetWidth > window.innerWidth - 10) left = window.innerWidth - tooltip.offsetWidth - 10;
     if (left < 10) left = 10;
-
-    const ttHeight = tooltip.offsetHeight;
-    let top = rect.top - ttHeight - 10;
+    let top = rect.top - tooltip.offsetHeight - 10;
     if (top < 10) top = rect.bottom + 10;
-
     tooltip.style.left = left + 'px';
     tooltip.style.top = top + 'px';
 }
 
 function hideTooltip() {
     tooltip.classList.remove('show');
-    document.querySelectorAll('.risk-badge.pinned').forEach(b => b.classList.remove('pinned'));
-    pinnedBadge = null;
+    document.querySelectorAll('.pinned').forEach(b => b.classList.remove('pinned'));
+    pinnedTarget = null;
 }
 
-// 🎯 EVENT DELEGATION — works on cards AND modal badges
 document.addEventListener('mouseover', function(e) {
-    const badge = e.target.closest('.risk-badge[data-level]');
-    if (badge && !pinnedBadge) showTooltip(badge);
+    if (pinnedTarget) return;
+    const riskBadge = e.target.closest('.risk-badge[data-level]');
+    if (riskBadge) {
+        const lvl = riskBadge.getAttribute('data-level');
+        const score = riskBadge.getAttribute('data-score');
+        if (lvl && lvl !== 'Not evaluated') showTooltip(riskBadge, buildRiskTooltip(lvl, score));
+        return;
+    }
+    const verifyBadge = e.target.closest('.verify-badge');
+    if (verifyBadge) showTooltip(verifyBadge, buildVerifyTooltip(verifyBadge.dataset.status));
 });
 
 document.addEventListener('mouseout', function(e) {
-    const badge = e.target.closest('.risk-badge[data-level]');
-    if (badge && !pinnedBadge) tooltip.classList.remove('show');
+    if (pinnedTarget) return;
+    if (e.target.closest('.risk-badge[data-level]') || e.target.closest('.verify-badge')) tooltip.classList.remove('show');
 });
 
 document.addEventListener('click', function(e) {
-    const badge = e.target.closest('.risk-badge[data-level]');
-    
-    if (badge) {
-        // Clicked a badge → toggle pin
+    const riskBadge = e.target.closest('.risk-badge[data-level]');
+    if (riskBadge) {
         e.stopPropagation();
-        if (pinnedBadge === badge) {
-            hideTooltip();
-        } else {
-            document.querySelectorAll('.risk-badge.pinned').forEach(b => b.classList.remove('pinned'));
-            pinnedBadge = badge;
-            badge.classList.add('pinned');
-            showTooltip(badge);
+        if (pinnedTarget === riskBadge) { hideTooltip(); }
+        else {
+            hideTooltip(); pinnedTarget = riskBadge; riskBadge.classList.add('pinned');
+            const lvl = riskBadge.getAttribute('data-level');
+            const score = riskBadge.getAttribute('data-score');
+            if (lvl && lvl !== 'Not evaluated') showTooltip(riskBadge, buildRiskTooltip(lvl, score));
         }
-    } else if (pinnedBadge && !pinnedBadge.contains(e.target)) {
-        // Clicked elsewhere → unpin
-        hideTooltip();
+        return;
     }
+    const verifyBadge = e.target.closest('.verify-badge');
+    if (verifyBadge) {
+        e.stopPropagation();
+        if (pinnedTarget === verifyBadge) { hideTooltip(); }
+        else {
+            hideTooltip(); pinnedTarget = verifyBadge; verifyBadge.classList.add('pinned');
+            showTooltip(verifyBadge, buildVerifyTooltip(verifyBadge.dataset.status));
+        }
+        return;
+    }
+    if (pinnedTarget && !pinnedTarget.contains(e.target)) hideTooltip();
 });
 
-window.addEventListener('scroll', function() {
-    tooltip.classList.remove('show');
+window.addEventListener('scroll', () => { if(!pinnedTarget) tooltip.classList.remove('show'); }, { passive: true });
+document.querySelector('.modal-content').addEventListener('scroll', () => {
+    if (tooltip.classList.contains('show')) hideTooltip();
 }, { passive: true });
 
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-        hideTooltip();
-        closeModal();
-    }
-});
+/* ============ PHOTO GALLERY ============ */
+function buildPhotoGallery(r) {
+    const fields = [
+        ['photo_front', 'Front'],
+        ['photo_rear', 'Rear'],
+        ['photo_side', 'Side'],
+        ['photo_engine', 'Engine'],
+        ['photo_interior', 'Interior'],
+        ['photo_dashboard', 'Dashboard'],
+    ];
+    const available = fields.filter(([k]) => r[k] && r[k] !== 'null' && r[k] !== '');
+    return available.map(([k, label]) => ({ key: k, src: 'uploads/' + r[k], label }));
+}
 
-// ============ MODAL ============
+function setMainPhoto(src) {
+    const imgEl = document.getElementById('m-img');
+    const phEl = document.getElementById('m-placeholder');
+    const box = document.getElementById('m-image-box');
+    if (src) {
+        imgEl.src = src;
+        imgEl.style.display = 'block';
+        phEl.style.display = 'none';
+        box.classList.remove('car-placeholder');
+    } else {
+        imgEl.style.display = 'none';
+        phEl.style.display = 'flex';
+        box.classList.add('car-placeholder');
+    }
+}
+
+/* ============ MODAL ============ */
 function openListingModal(idx) {
     const r = LISTINGS[idx];
     if (!r) return;
 
-    document.getElementById('m-title').textContent = r.brand + ' ' + r.model;
-    document.getElementById('m-subtitle').textContent = r.year_manufactured + ' • ' + Number(r.mileage).toLocaleString() + ' km • ' + (r.transmission || 'N/A') + ' • ' + (r.fuel_type || 'N/A');
-    document.getElementById('m-price').textContent = '₱' + Number(r.asking_price).toLocaleString();
-    document.getElementById('m-year').textContent = r.year_manufactured || 'N/A';
-    document.getElementById('m-mileage').textContent = Number(r.mileage).toLocaleString() + ' km';
-    document.getElementById('m-trans').textContent = r.transmission || 'N/A';
-    document.getElementById('m-fuel').textContent = r.fuel_type || 'N/A';
-    document.getElementById('m-color').textContent = r.color || 'N/A';
-    document.getElementById('m-cond').textContent = r.maintenance_history || 'N/A';
-    document.getElementById('m-reg').textContent = r.registration_status || 'N/A';
-    document.getElementById('m-negotiable').textContent = r.price_negotiability || 'Fixed Price';
-
-    const loc = [r.city, r.district, r.barangay].filter(Boolean).join(', ');
-    document.getElementById('m-location').textContent = loc || 'N/A';
-
-    const landmarkEl = document.getElementById('m-landmark');
-    if (r.location && r.location !== loc) {
-        landmarkEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;vertical-align:middle;display:inline-block;margin-right:3px;color:#6b7280;"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>' + escapeHtml(r.location);
+    /* ----- Photos ----- */
+    const photos = buildPhotoGallery(r);
+    const thumbStrip = document.getElementById('m-thumb-strip');
+    thumbStrip.innerHTML = '';
+    if (photos.length > 0) {
+        setMainPhoto(photos[0].src);
+        if (photos.length > 1) {
+            photos.forEach((p, i) => {
+                const t = document.createElement('img');
+                t.src = p.src;
+                t.className = 'modal-thumb' + (i === 0 ? ' active' : '');
+                t.alt = p.label;
+                t.onclick = () => {
+                    setMainPhoto(p.src);
+                    thumbStrip.querySelectorAll('.modal-thumb').forEach(el => el.classList.remove('active'));
+                    t.classList.add('active');
+                };
+                thumbStrip.appendChild(t);
+            });
+        } else {
+            thumbStrip.style.display = 'none';
+        }
+        thumbStrip.style.display = '';
     } else {
-        landmarkEl.innerHTML = '';
+        setMainPhoto(null);
+        thumbStrip.style.display = 'none';
     }
 
-    document.getElementById('m-seller').textContent = r.seller_name || 'Anonymous Seller';
-    document.getElementById('m-contact').textContent = r.seller_contact || 'N/A';
+    /* ----- Header ----- */
+    setText('m-title', r.brand + ' ' + r.model);
+    setText('m-subtitle', `${r.year_manufactured} • ${Number(r.mileage).toLocaleString()} km • ${r.transmission || 'N/A'} • ${r.fuel_type || 'N/A'}`);
+    setText('m-price', '₱' + Number(r.asking_price).toLocaleString());
+    setText('m-price-meta', r.price_negotiability || 'Fixed Price');
 
-    const riskMap = {
-        'Low':    { bg: '#dcfce7', fg: '#166534', icon: '✓' },
-        'Medium': { bg: '#fef3c7', fg: '#92400e', icon: '⚠' },
-        'High':   { bg: '#fee2e2', fg: '#991b1b', icon: '✕' }
-    };
-    const badge = document.getElementById('m-risk-badge');
-    const flagsDiv = document.getElementById('m-risk-flags');
-    const recDiv = document.getElementById('m-risk-rec');
+    /* ----- Specs ----- */
+    setText('m-year', r.year_manufactured);
+    setText('m-mileage', Number(r.mileage).toLocaleString() + ' km');
+    setText('m-color', r.color);
+    setText('m-trans', r.transmission);
+    setText('m-fuel', r.fuel_type);
+    setText('m-mods', r.modifications || 'Stock / None');
 
-    if (r.risk_level && riskMap[r.risk_level]) {
-        const c = riskMap[r.risk_level];
-        // 🎯 ADDED data-level, data-score AND REMOVED cursor:default
-        badge.innerHTML = '<span class="risk-badge" '
-            + 'style="background:' + c.bg + '; color:' + c.fg + '; font-size: 13px; padding: 6px 14px;" '
-            + 'data-level="' + r.risk_level + '" '
-            + 'data-score="' + r.risk_score + '" '
-            + 'title="Risk Score: ' + r.risk_score + '/100 (' + r.risk_level + ') — click to pin">'
-            + c.icon + ' ' + r.risk_level + ' · ' + r.risk_score + '/100'
-            + '</span>';
-            
-        const flags = (r.risk_flags || '').split('|').map(f => f.trim()).filter(f => f.length > 0);
-        flagsDiv.innerHTML = flags.length
-            ? flags.map(f => '<div class="flag-item">' + escapeHtml(f) + '</div>').join('')
-            : '<div style="font-size: 13px; color: #6b7280; font-style: italic;">No risk flags detected</div>';
-        recDiv.textContent = 'Recommendation: ' + (r.risk_recommendation || 'N/A');
+    /* ----- Condition & History ----- */
+    setHtml('m-first-owner', yesNoPill(r.first_owner));
+    setText('m-maint', r.maintenance_history || 'N/A');
+    const acc = (r.accident_history || 'None').trim();
+    setHtml('m-accident', acc && acc.toLowerCase() !== 'none'
+        ? '<span class="pill-no">' + esc(acc) + '</span>'
+        : '<span class="pill-yes">✓ None</span>');
+    setHtml('m-flooded', yesNoPill(r.flooded));
+
+    /* ----- Legal ----- */
+    setText('m-lto', r.registration_status || 'N/A');
+    setHtml('m-orcr', yesNoPill(r.or_cr_ready));
+    setHtml('m-paid', yesNoPill(r.fully_paid));
+    setHtml('m-deed', yesNoPill(r.deed_of_sale_ready));
+
+    /* ----- Pricing ----- */
+    setText('m-nego', r.price_negotiability || 'N/A');
+    setHtml('m-trade', yesNoPill(r.trade_in));
+    setText('m-warranty', r.warranty_status || 'No Warranty');
+    setText('m-payment', r.payment_methods || 'Cash');
+
+    /* ----- Location ----- */
+    setText('m-city', r.city);
+    setText('m-barangay', r.barangay);
+    setText('m-location', r.location || [r.city, r.district, r.barangay].filter(Boolean).join(', '));
+
+    /* ----- Seller ----- */
+    setText('m-seller', r.seller_name, 'Anonymous Seller');
+    setText('m-contact', r.seller_contact);
+    document.getElementById('m-contact').style.fontFamily = 'var(--font-mono)';
+
+    /* ----- Notes ----- */
+    const notesWrap = document.getElementById('m-notes-wrap');
+    const notesSection = document.getElementById('m-notes-section');
+    const notesHtml = [];
+    if (r.reason_for_selling) notesHtml.push(`<div class="notes-box"><span class="notes-lbl">Reason for Selling</span>${esc(r.reason_for_selling)}</div>`);
+    if (r.seller_notes) notesHtml.push(`<div class="notes-box"><span class="notes-lbl">Additional Notes</span>${esc(r.seller_notes)}</div>`);
+    if (notesHtml.length > 0) {
+        notesWrap.innerHTML = notesHtml.join('');
+        notesSection.style.display = 'block';
     } else {
-        badge.innerHTML = '<span class="risk-badge" '
-            + 'style="background:#f3f4f6; color:#6b7280; font-size: 13px; padding: 6px 14px;" '
-            + 'data-level="" data-score="0" '
-            + 'title="Not evaluated — click to learn more">'
-            + 'Not evaluated</span>';
-        flagsDiv.innerHTML = '<div style="font-size: 13px; color: #6b7280; font-style: italic;">This listing has not been risk-scored.</div>';
-        recDiv.textContent = '';
+        notesSection.style.display = 'none';
     }
 
-    const rfsWrap = document.getElementById('m-rfs-wrap');
-    if (r.reason_for_selling) {
-        rfsWrap.style.display = 'block';
-        document.getElementById('m-rfs').textContent = r.reason_for_selling;
+    /* ----- Risk ----- */
+    const riskSection = document.getElementById('m-risk-section');
+    if ((r.verification_status ?? '') === 'mechanic_verified') {
+        riskSection.style.display = 'none';
     } else {
-        rfsWrap.style.display = 'none';
-    }
+        riskSection.style.display = 'block';
+        const riskMap = {
+            'Low':    { bg: '#ecfdf5', fg: '#059669', border: '#a7f3d0', icon: '✓' },
+            'Medium': { bg: '#fffbeb', fg: '#d97706', border: '#fde68a', icon: '⚠' },
+            'High':   { bg: '#fef2f2', fg: '#dc2626', border: '#fecaca', icon: '✕' }
+        };
+        const badge = document.getElementById('m-risk-badge');
+        const flagsDiv = document.getElementById('m-risk-flags');
 
-    if (r.date_added) {
-        const d = new Date(r.date_added.replace(' ', 'T'));
-        document.getElementById('m-listed').textContent = 'Listed on ' + d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+        if (r.risk_level && riskMap[r.risk_level]) {
+            const c = riskMap[r.risk_level];
+            badge.innerHTML = '<span class="risk-badge" '
+                + 'data-level="' + r.risk_level + '" '
+                + 'data-score="' + (r.risk_score ?? 0) + '" '
+                + 'style="background:' + c.bg + '; color:' + c.fg + '; border: 1px solid ' + c.border
+                + '; font-size: 13px; padding: 6px 14px;">'
+                + c.icon + ' Risk Score: ' + r.risk_level + '</span>';
+            const flags = (r.risk_flags || '').split('|').map(f => f.trim()).filter(f => f.length > 0);
+            flagsDiv.innerHTML = flags.length
+                ? flags.map(f => '<div class="flag-item">' + esc(f) + '</div>').join('')
+                : '<div style="font-size: 13px; color: #64748b; font-style: italic;">No risk flags detected</div>';
+        } else {
+            badge.innerHTML = '<span class="risk-badge" style="background:#f1f5f9; color:#64748b; border: 1px solid #e2e8f0;">Not evaluated</span>';
+            flagsDiv.innerHTML = '<div style="font-size: 13px; color: #64748b; font-style: italic;">Not evaluated.</div>';
+        }
     }
 
     document.getElementById('listingModal').classList.add('show');
     document.body.style.overflow = 'hidden';
+    document.querySelector('.modal-content').scrollTop = 0;
 }
 
 function closeModal() {
-    hideTooltip(); // Hide tooltip if it was pinned when modal closes
+    hideTooltip();
     document.getElementById('listingModal').classList.remove('show');
     document.body.style.overflow = '';
-}
-
-function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, function(m) {
-        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
-    });
 }
 </script>
 
