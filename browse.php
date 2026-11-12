@@ -8,7 +8,7 @@ $f_max      = trim($_GET['max_price'] ?? '');
 $f_sort     = trim($_GET['sort'] ?? 'newest');
 $f_verified = trim($_GET['verified'] ?? 'all'); // NEW
 
-$where  = ["status = 'approved'", "listing_type = 'user_sale'"];
+$where  = ["status = 'approved'", "listing_type IN ('user_sale', 'scraped')"];
 $params = [];
 
 if ($f_model !== '') { $where[] = "model = ?";           $params[] = $f_model; }
