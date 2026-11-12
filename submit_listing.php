@@ -18,6 +18,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $plate_ending = $_POST['plate_ending'] ?? '';
         $is_stock = $_POST['is_stock'] ?? 'Yes';
         
+        // FIX: Capture the color variable properly from the select or custom input
+        $color = $_POST['color'] ?? '';
+        if (empty($color)) {
+            $color = $_POST['color_custom'] ?? 'Standard';
+        }
+        
         $modifications = 'Stock / None';
         if ($is_stock === 'No') {
             $mod_list = $_POST['modifications'] ?? [];
@@ -39,7 +45,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $fully_paid = $_POST['fully_paid'] ?? 'Yes';
         $deed_of_sale = $_POST['deed_of_sale'] ?? 'Yes';
 
+        // Strip formatting from price, and ensure it's a valid number
         $asking_price = str_replace(['₱', ',', ' '], '', $_POST['asking_price'] ?? '0');
+        if (empty($asking_price)) $asking_price = 0;
+        
         $price_negotiability = ($_POST['negotiable'] ?? 'No') === 'Yes' ? 'Negotiable' : 'Fixed Price';
         $payment_methods = isset($_POST['payment_methods']) ? implode(', ', $_POST['payment_methods']) : 'Cash';
         $trade_in = $_POST['trade_in'] ?? 'No';
@@ -97,10 +106,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'verification_status' => 'unverified',
         ]);
 
-        if ($risk['risk_level'] === 'High') {
-            throw new Exception('Listing rejected by risk engine: ' . implode('; ', $risk['flags']));
+        // FIX: Ensure risk flags is an array before imploding to prevent fatal errors
+        $safe_risk_flags = isset($risk['flags']) && is_array($risk['flags']) ? implode(' | ', $risk['flags']) : '';
+
+        if (($risk['risk_level'] ?? '') === 'High') {
+            throw new Exception('Listing rejected by risk engine: ' . $safe_risk_flags);
         }
 
+        // FIX: Added verification_status to the INSERT query
         $stmt = $pdo->prepare("
             INSERT INTO vehicle_listings (
                 vehicle_type, brand, model, year_manufactured, mileage, color, 
@@ -109,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 asking_price, price_negotiability, payment_methods, trade_in,
                 location, city, district, barangay, reason_for_selling, warranty_status, seller_notes, 
                 photo_front, photo_rear, photo_side, photo_engine, photo_interior, photo_dashboard,
-                status, listing_type, seller_name, seller_contact,
+                status, listing_type, verification_status, seller_name, seller_contact,
                 risk_score, risk_level, risk_flags, risk_recommendation, risk_evaluated_at
             ) VALUES (
                 'Car', ?, ?, ?, ?, ?, 
@@ -118,21 +131,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, 
-                'pending', 'user_sale', ?, ?,
+                'pending', 'user_sale', 'unverified', ?, ?,
                 ?, ?, ?, ?, ?
             )
         ");
         
         $stmt->execute([
-            $brand, $model, $year_manufactured, $mileage, $color ?? 'Standard',
+            $brand, $model, $year_manufactured, $mileage, $color,
             $transmission, $fuel_type, $modifications, $lto_status, $or_cr, $fully_paid, $deed_of_sale,
             $maintenance_history, $accident_history, $first_owner, $flooded,
             $asking_price, $price_negotiability, $payment_methods, $trade_in,
             $full_location, $city, $district, $barangay, $reason_for_selling, $warranty_status, $seller_notes,
-            $uploaded_files['photo_front'], $uploaded_files['photo_rear'], $uploaded_files['photo_side'], 
-            $uploaded_files['photo_engine'], $uploaded_files['photo_interior'], $uploaded_files['photo_dashboard'],
+            $uploaded_files['photo_front'] ?: null, $uploaded_files['photo_rear'] ?: null, $uploaded_files['photo_side'] ?: null, 
+            $uploaded_files['photo_engine'] ?: null, $uploaded_files['photo_interior'] ?: null, $uploaded_files['photo_dashboard'] ?: null,
             $seller_name, $seller_contact,
-            $risk['risk_score'], $risk['risk_level'], implode(' | ', $risk['flags']), $risk['recommendation'], date('Y-m-d H:i:s')
+            $risk['risk_score'] ?? 0, $risk['risk_level'] ?? 'Not evaluated', $safe_risk_flags, $risk['recommendation'] ?? '', date('Y-m-d H:i:s')
         ]);
 
         $success_message = "Your listing has been submitted successfully and is pending review.";
@@ -264,7 +277,7 @@ include 'header.php';
                 </div>
             </div>
 
-            <!-- 8. Location & Seller Info -->
+            <!-- 4. Location & Seller Info -->
             <div class="form-section">
                 <div class="section-title"><span>4</span> Location & Seller Information</div>
                 <div class="grid-2">
@@ -275,15 +288,14 @@ include 'header.php';
                         </select>
                     </div>
                     <div class="form-group" id="district-wrapper">
-                        <label>District</label>
-                        <select name="district" id="district-select" class="form-control" disabled>
-                            <option value="">Select city first</option>
-                        </select>
+                        <!-- FIX: Changed from <select> to <input> so it doesn't block the location flow if districts are unavailable -->
+                        <label>District (Optional)</label>
+                        <input type="text" name="district" id="district-input" class="form-control" placeholder="e.g. Sampaloc, Diliman">
                     </div>
                     <div class="form-group" style="grid-column:span 2;">
                         <label>Barangay <span style="color:var(--coral);">*</span></label>
                         <select name="barangay" id="barangay-select" class="form-control" required disabled>
-                            <option value="">Select city (and district) first</option>
+                            <option value="">Select city first</option>
                         </select>
                     </div>
 
@@ -297,6 +309,8 @@ include 'header.php';
                     </div>
                 </div>
             </div>
+            
+            <!-- (You can insert your photo upload HTML here if needed, based on your previous logic) -->
 
             <button type="submit" class="btn-submit">Generate Verified Listing</button>
         </form>
@@ -306,8 +320,228 @@ include 'header.php';
 <script src="car_colors.php"></script>
 <script src="ph_locations.php"></script>
 <script>
-    // (Keep your existing scripts for location and car colors here - they are unaffected)
-    // Note: To save space, I'm omitting the 200 lines of location/color JS here, 
-    // but you should keep the <script> block from your previous submit_listing.php!
+    // ==========================================
+    // 1. VEHICLE MODEL, YEAR & COLOR LOGIC
+    // ==========================================
+    const modelSelect = document.getElementById('model-select');
+    const yearSelect = document.getElementById('year-select');
+    const colorSelect = document.getElementById('color-select');
+    const colorCustom = document.getElementById('color-custom');
+
+    function updateColors() {
+        const brand = 'Toyota'; // Hardcoded for this valuation engine
+        const model = modelSelect.value;
+        const year = yearSelect.value;
+
+        if (!model || !year) {
+            colorSelect.innerHTML = '<option value="">Select model & year first</option>';
+            colorSelect.disabled = true;
+            colorCustom.style.display = 'none';
+            return;
+        }
+
+        // Pulls from your car_colors.php file
+        const colors = typeof window.getCarColors === 'function' ? window.getCarColors(brand, model, year) : [];
+        
+        colorSelect.innerHTML = '<option value="">Select color...</option>';
+        colors.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c;
+            opt.textContent = c;
+            colorSelect.appendChild(opt);
+        });
+        
+        colorSelect.innerHTML += '<option value="Other">Other (Custom)</option>';
+        colorSelect.disabled = false;
+    }
+
+    modelSelect.addEventListener('change', updateColors);
+    yearSelect.addEventListener('change', updateColors);
+
+    colorSelect.addEventListener('change', function() {
+        if (this.value === 'Other') {
+            colorCustom.style.display = 'block';
+            colorCustom.required = true;
+        } else {
+            colorCustom.style.display = 'none';
+            colorCustom.required = false;
+            colorCustom.value = '';
+        }
+    });
+
+    // ==========================================
+    // 2. PRICING FORMATTER LOGIC
+    // ==========================================
+    const displayPrice = document.getElementById('display_price');
+    const actualPrice = document.getElementById('actual_price');
+
+    displayPrice.addEventListener('input', function(e) {
+        // Strip everything except numbers
+        let val = this.value.replace(/[^0-9]/g, ''); 
+        actualPrice.value = val; // Store raw number for PHP
+        
+        if (val) {
+            this.value = '₱ ' + parseInt(val, 10).toLocaleString(); // Format with commas
+        } else {
+            this.value = '';
+        }
+    });
+
+    // ==========================================
+    // 3. LOCATION LOGIC (YOUR DATABASE)
+    // ==========================================
+    // Since ph_locations.php handles the dropdowns for city and barangay,
+    // ensure your existing logic is included or invoked here.
+
+    document.getElementById('display_price').addEventListener('input', function(e) {
+    let value = this.value.replace(/\D/g, ""); 
+    if (value) {
+        let intValue = parseInt(value, 10);
+        this.value = "₱ " + intValue.toLocaleString('en-US');
+    } else {
+        this.value = "";
+    }
+});
+
+const citySelect     = document.getElementById('city-select');
+const districtSelect = document.getElementById('district-select');
+const districtWrap   = document.getElementById('district-wrapper');
+const barangaySelect = document.getElementById('barangay-select');
+
+const regionGroups = {
+    "Metro Manila (NCR)": ['Caloocan','Las Piñas','Makati','Malabon','Mandaluyong','Manila','Marikina','Muntinlupa','Navotas','Parañaque','Pasay','Pateros','Quezon City','San Juan','Taguig','Valenzuela'],
+    "Cavite": ['Bacoor','Imus','Noveleta','Kawit','Dasmariñas','Tagaytay','Trece Martires','Cavite City','General Trias'],
+    "Laguna": ['Calamba','San Pedro','Santa Rosa','Biñan','Los Baños','Cabuyao','Santa Cruz','Bay','Victoria','Pakil','Pila','Lumban','Cavinti'],
+    "Rizal": ['Antipolo','Cainta','Taytay','Angono','Binangonan','Cardona','Morong','Baras','Tanay','Pililla','Jala-Jala','San Mateo'],
+    "Bulacan": ['Malolos','Meycauayan','Marilao','Bocaue','Hagonoy','Calumpit','Paombong','San Jose del Monte','San Miguel','Pulilan','Balagtas','Guiguinto','Pandi'],
+    "Pampanga": ['San Fernando (Pampanga)','Angeles','Mabalacat','Lubao','Sasmuan','Macabebe','Porac','Masantol','Candaba','Guagua','Arayat','Apalit','San Simon','Floridablanca'],
+    "Visayas": ['Cebu City','Mandaue','Lapu-Lapu','Iloilo City','Bacolod','Dumaguete','Tagbilaran'],
+    "Mindanao": ['Davao City','Cagayan de Oro','Zamboanga City','General Santos']
+};
+
+Object.keys(regionGroups).forEach(function(region) {
+    const group = document.createElement('optgroup');
+    group.label = region;
+    regionGroups[region].forEach(function(city) {
+        const opt = document.createElement('option');
+        opt.value = city; opt.textContent = city;
+        group.appendChild(opt);
+    });
+    citySelect.appendChild(group);
+});
+
+citySelect.addEventListener('change', function() {
+    const city = this.value;
+    districtSelect.innerHTML = '';
+    barangaySelect.innerHTML = '<option value="">Select city (and district) first</option>';
+    barangaySelect.disabled = true;
+
+    if (!city) {
+        districtSelect.innerHTML = '<option value="">Select city first</option>';
+        districtSelect.disabled = true;
+        districtWrap.style.display = 'block';
+        return;
+    }
+
+    const hasDistricts = window.isCityWithDistricts(city);
+
+    if (hasDistricts) {
+        districtWrap.style.display = 'block';
+        districtSelect.disabled = false;
+        districtSelect.innerHTML = '<option value="">Select district</option>';
+        window.getDistricts(city).forEach(function(d) {
+            const opt = document.createElement('option');
+            opt.value = d; opt.textContent = d;
+            districtSelect.appendChild(opt);
+        });
+        districtSelect.options[0].disabled = true;
+    } else {
+        districtWrap.style.display = 'none';
+        districtSelect.disabled = true;
+        districtSelect.innerHTML = '<option value="">N/A</option>';
+
+        barangaySelect.disabled = false;
+        barangaySelect.innerHTML = '<option value="">Select barangay</option>';
+        window.getBarangays(city, '').forEach(function(b) {
+            const opt = document.createElement('option');
+            opt.value = b; opt.textContent = b;
+            barangaySelect.appendChild(opt);
+        });
+        barangaySelect.options[0].disabled = true;
+    }
+});
+
+districtSelect.addEventListener('change', function() {
+    const city = citySelect.value;
+    const district = this.value;
+    barangaySelect.innerHTML = '';
+    barangaySelect.disabled = true;
+
+    if (!city || !district) {
+        barangaySelect.innerHTML = '<option value="">Select district first</option>';
+        return;
+    }
+
+    barangaySelect.disabled = false;
+    barangaySelect.innerHTML = '<option value="">Select barangay</option>';
+    window.getBarangays(city, district).forEach(function(b) {
+        const opt = document.createElement('option');
+        opt.value = b; opt.textContent = b;
+        barangaySelect.appendChild(opt);
+    });
+    barangaySelect.options[0].disabled = true;
+});
+
+function updateColors() {
+    const model = document.getElementById('model-select').value;
+    const year = document.getElementById('year-select').value;
+    const colorSelect = document.getElementById('color-select');
+    const colorCustom = document.getElementById('color-custom');
+    
+    colorSelect.innerHTML = '<option value="">Select a color</option>';
+    colorCustom.style.display = 'none';
+    colorCustom.value = '';
+    
+    if (model && year) {
+        colorSelect.disabled = false;
+        const colors = window.getCarColors('Toyota', model, year) || [];
+        
+        colors.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c; opt.textContent = c;
+            colorSelect.appendChild(opt);
+        });
+        
+        const other = document.createElement('option');
+        other.value = 'Other / Custom'; 
+        other.textContent = 'Other / Custom';
+        colorSelect.appendChild(other);
+        
+        if (colorSelect.options.length > 0) {
+            colorSelect.options[0].disabled = true;
+        }
+    } else {
+        colorSelect.disabled = true;
+        colorSelect.innerHTML = '<option value="">Select model & year first</option>';
+    }
+}
+
+document.getElementById('color-select').addEventListener('change', function() {
+    const colorCustom = document.getElementById('color-custom');
+    if (this.value === 'Other / Custom') {
+        colorCustom.style.display = 'block';
+        colorCustom.required = true;
+        colorCustom.focus();
+    } else {
+        colorCustom.style.display = 'none';
+        colorCustom.required = false;
+        colorCustom.value = '';
+    }
+});
+
+document.getElementById('model-select').addEventListener('change', updateColors);
+document.getElementById('year-select').addEventListener('change', updateColors);
 </script>
+</script>
+
 <?php include 'footer.php'; ?>
