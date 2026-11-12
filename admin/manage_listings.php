@@ -1,291 +1,570 @@
 <?php
 session_start();
 require_once '../db.php';
-
-// Ensure the user is an authenticated admin
-if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
-    header("Location: index.php");
-    exit;
-}
-
 $current_page = 'manage_listings';
 
-// Handle Actions (Approve, Reject, Delete)
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['action']) && isset($_POST['listing_id'])) {
-        $action = $_POST['action'];
-        $id = (int)$_POST['listing_id'];
-        
-        if ($action === 'approve') {
-            $stmt = $pdo->prepare("UPDATE vehicle_listings SET status = 'approved' WHERE id = ?");
-            $stmt->execute([$id]);
-        } elseif ($action === 'reject') {
-            $stmt = $pdo->prepare("UPDATE vehicle_listings SET status = 'rejected' WHERE id = ?");
-            $stmt->execute([$id]);
-        } elseif ($action === 'delete') {
-            $stmt = $pdo->prepare("DELETE FROM vehicle_listings WHERE id = ?");
-            $stmt->execute([$id]);
-        }
-        header("Location: manage_listings.php");
-        exit;
+// Handle Delete Action
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete' && isset($_POST['listing_id'])) {
+    $delete_id = (int)$_POST['listing_id'];
+    try {
+        $delStmt = $pdo->prepare("DELETE FROM vehicle_listings WHERE id = ?");
+        $delStmt->execute([$delete_id]);
+        $msg = "Listing #{$delete_id} has been successfully deleted.";
+    } catch (PDOException $e) {
+        $msg = "Error deleting listing. It might be referenced elsewhere.";
     }
 }
 
-// --- DYNAMIC SEARCH & SORTING ALGORITHM ---
-
-// 1. Capture Search Query
-$search = isset($_GET['search']) ? trim($_GET['search']) : '';
-
-// 2. Capture Sort Parameters
-$allowed_sorts = ['id', 'brand', 'asking_price', 'listing_type', 'status'];
-$sort = isset($_GET['sort']) && in_array($_GET['sort'], $allowed_sorts) ? $_GET['sort'] : 'id';
-$dir = isset($_GET['dir']) && $_GET['dir'] === 'ASC' ? 'ASC' : 'DESC';
-$next_dir = ($dir === 'ASC') ? 'DESC' : 'ASC';
-
-// 3. Build SQL Query Dynamically
-$sql = "SELECT * FROM vehicle_listings";
-$params = [];
-
-// If user is searching, append WHERE clause
-if ($search !== '') {
-    $sql .= " WHERE brand LIKE ? OR model LIKE ? OR status LIKE ? OR listing_type LIKE ? OR year_manufactured LIKE ?";
-    $search_param = "%{$search}%";
-    $params = [$search_param, $search_param, $search_param, $search_param, $search_param];
+// Handle Search Query
+$search = $_GET['search'] ?? '';
+if (!empty($search)) {
+    $stmt = $pdo->prepare("SELECT * FROM vehicle_listings WHERE brand LIKE ? OR model LIKE ? OR status LIKE ? ORDER BY date_added DESC");
+    $searchTerm = "%$search%";
+    $stmt->execute([$searchTerm, $searchTerm, $searchTerm]);
+} else {
+    $stmt = $pdo->query("SELECT * FROM vehicle_listings ORDER BY date_added DESC");
 }
-
-// Append Sort clause
-$sql .= " ORDER BY $sort $dir";
-
-// 4. Execute the Query
-$stmt = $pdo->prepare($sql);
-$stmt->execute($params);
 $listings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Helper function to build sortable header links that preserve the search query
-function sortLink($column, $label, $current_sort, $current_dir, $next_dir, $search) {
-    $icon = '';
-    if ($current_sort === $column) {
-        $icon = $current_dir === 'ASC' ? ' <span style="font-size:10px;">▲</span>' : ' <span style="font-size:10px;">▼</span>';
-    }
-    $search_param = $search !== '' ? '&search=' . urlencode($search) : '';
-    $url = "?sort={$column}&dir=" . ($current_sort === $column ? $next_dir : 'ASC') . $search_param;
-    return "<a href='{$url}' style='color:inherit; text-decoration:none; display:flex; align-items:center; gap:4px;'>{$label}{$icon}</a>";
-}
 
 include 'header.php';
 ?>
 
 <style>
-  .admin-panel { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 24px; }
-  
-  /* Search Bar Styling */
-  .panel-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-  .search-form { display: flex; gap: 8px; align-items: center; }
-  .search-input { padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; width: 250px; outline: none; transition: border-color 0.2s; }
-  .search-input:focus { border-color: #5865f2; box-shadow: 0 0 0 3px rgba(88,101,242,0.1); }
-  .btn-search { background: #5865f2; color: #fff; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: background 0.2s; }
-  .btn-search:hover { background: #4752c4; }
-  .btn-clear { background: #f3f4f6; color: #4b5563; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; text-decoration: none; transition: background 0.2s; }
-  .btn-clear:hover { background: #e5e7eb; }
+    .admin-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    
+    /* --- New Header & Search Layout --- */
+    .header-section {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+    }
+    .header-titles {
+        display: flex;
+        flex-direction: column;
+    }
+    .page-title {
+        font-size: 28px;
+        font-weight: 800;
+        color: #111827;
+        margin: 0;
+    }
+    .page-subtitle {
+        font-size: 15px;
+        color: #6b7280;
+        margin-top: 4px;
+    }
+    .search-form {
+        display: flex;
+        gap: 8px;
+    }
+    .search-input {
+        padding: 10px 14px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 14px;
+        width: 260px;
+    }
+    .search-input:focus {
+        outline: none;
+        border-color: #5865f2;
+        box-shadow: 0 0 0 3px rgba(88, 101, 242, 0.1);
+    }
+    .search-btn {
+        background-color: #6366f1; /* Matching the purple/blue in the image */
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+    .search-btn:hover {
+        background-color: #4f46e5;
+    }
 
-  .table-container { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
-  th { background: #f9fafb; padding: 12px 16px; color: #374151; font-weight: 600; border-bottom: 2px solid #e5e7eb; }
-  th a:hover { color: #3b82f6 !important; }
-  td { padding: 12px 16px; border-bottom: 1px solid #e5e7eb; color: #111827; }
-  tr:hover { background: #f9fafb; }
-  
-  .badge { padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: capitalize; }
-  .badge.pending { background: #fef3c7; color: #d97706; }
-  .badge.approved { background: #d1fae5; color: #059669; }
-  .badge.rejected { background: #fee2e2; color: #dc2626; }
-  .badge.scraped { background: #e0e7ff; color: #4f46e5; }
-  .badge.user { background: #f3e8ff; color: #9333ea; }
+    /* --- Table Styling --- */
+    .table-container {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        border: 1px solid #e5e7eb;
+        overflow: hidden;
+    }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+    }
+    th {
+        background: #f9fafb;
+        padding: 16px 20px;
+        font-size: 12px;
+        text-transform: uppercase;
+        color: #6b7280;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        border-bottom: 1px solid #e5e7eb;
+    }
+    td {
+        padding: 16px 20px;
+        border-bottom: 1px solid #e5e7eb;
+        font-size: 14px;
+        color: #111827;
+        vertical-align: middle;
+    }
+    tr:last-child td {
+        border-bottom: none;
+    }
+    tr:hover {
+        background: #f3f4f6;
+    }
+    .status-badge {
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 700;
+        display: inline-block;
+    }
+    .status-pending { background: #fef3c7; color: #b45309; }
+    .status-approved { background: #d1fae5; color: #065f46; }
+    .status-rejected { background: #fee2e2; color: #991b1b; }
+    
+    .action-group {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+    }
+    .action-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: none;
+        border: none;
+        color: #6b7280;
+        cursor: pointer;
+        padding: 6px;
+        border-radius: 6px;
+        transition: 0.2s;
+        text-decoration: none;
+    }
+    .action-btn:hover {
+        background: #e5e7eb;
+        color: #111827;
+    }
+    .action-btn.delete-btn:hover {
+        background: #fee2e2;
+        color: #dc2626;
+    }
+    .action-btn svg {
+        width: 18px;
+        height: 18px;
+    }
 
-  .action-btns { display: flex; gap: 8px; align-items: center; }
-  .btn-icon { background: none; border: none; cursor: pointer; padding: 6px; border-radius: 4px; transition: 0.2s; color: #6b7280; display: inline-flex; }
-  .btn-icon:hover { background: #e5e7eb; }
-  .btn-view:hover { color: #3b82f6; }
-  .btn-edit:hover { color: #8b5cf6; }
-  .btn-approve:hover { color: #10b981; }
-  .btn-reject:hover { color: #f59e0b; }
-  .btn-delete:hover { color: #ef4444; }
+    /* --- Modal Styling --- */
+    .modal-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(17, 24, 39, 0.6);
+        display: none; 
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+        padding: 20px;
+    }
+    .modal-overlay.active {
+        display: flex;
+    }
+    .modal-content {
+        background: white;
+        border-radius: 12px;
+        width: 100%;
+        max-width: 900px;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        animation: modalFadeIn 0.2s ease-out;
+    }
+    @keyframes modalFadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .modal-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #f9fafb;
+        border-radius: 12px 12px 0 0;
+    }
+    .modal-title {
+        font-size: 20px;
+        font-weight: 800;
+        color: #111827;
+    }
+    .btn-close {
+        background: none; border: none; cursor: pointer; color: #6b7280;
+    }
+    .btn-close:hover { color: #111827; }
+    
+    .modal-body {
+        padding: 24px;
+        overflow-y: auto;
+    }
+    .detail-section {
+        margin-bottom: 24px;
+    }
+    .detail-section h4 {
+        margin: 0 0 12px 0;
+        font-size: 15px;
+        font-weight: 700;
+        color: #374151;
+        border-bottom: 2px solid #e5e7eb;
+        padding-bottom: 6px;
+    }
+    .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+    }
+    .data-group {
+        display: flex;
+        flex-direction: column;
+    }
+    .data-lbl {
+        font-size: 11px;
+        color: #6b7280;
+        text-transform: uppercase;
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+    .data-val {
+        font-size: 14px;
+        color: #111827;
+        font-weight: 500;
+    }
+    .risk-high { color: #dc2626; font-weight: 700; }
+    .risk-med { color: #d97706; font-weight: 700; }
+    .risk-low { color: #059669; font-weight: 700; }
 
-  /* Modal Styling */
-  .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(17, 24, 39, 0.7); z-index: 1000; justify-content: center; align-items: center; }
-  .modal-overlay.active { display: flex; }
-  .modal-content { background: #fff; width: 100%; max-width: 600px; border-radius: 12px; padding: 24px; position: relative; max-height: 90vh; overflow-y: auto; }
-  .modal-close { position: absolute; top: 16px; right: 16px; cursor: pointer; color: #6b7280; background: none; border: none; font-size: 20px; }
-  .modal-title { font-size: 20px; font-weight: 700; margin-bottom: 16px; color: #111827; }
-  .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
-  .data-group { background: #f9fafb; padding: 12px; border-radius: 8px; border: 1px solid #e5e7eb; }
-  .data-lbl { font-size: 11px; color: #6b7280; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; }
-  .data-val { font-size: 14px; font-weight: 600; color: #111827; }
-  .price-highlight { background: #eff6ff; border-color: #bfdbfe; }
-  .price-highlight .data-val { color: #1d4ed8; font-size: 16px; }
+    /* Photo Gallery inside Modal */
+    .photo-gallery {
+        display: flex;
+        gap: 12px;
+        overflow-x: auto;
+        padding-bottom: 8px;
+    }
+    .photo-item {
+        flex: 0 0 auto;
+        width: 150px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    .photo-item img {
+        width: 100%;
+        height: 100px;
+        object-fit: cover;
+        display: block;
+    }
+    .photo-label {
+        font-size: 11px;
+        text-align: center;
+        padding: 4px;
+        background: #f9fafb;
+        font-weight: 600;
+        color: #374151;
+    }
 </style>
 
-<div class="view" style="display: block; width: 100%; max-width: none;">
-  <div class="admin-panel">
+<div class="view admin-container">
     
-    <div class="panel-header-row">
-        <div>
-            <h2 style="margin:0 0 8px 0;">Manage Vehicle Listings</h2>
-            <p style="color: #6b7280; margin: 0;">Review, search, and sort all gathered and user-submitted data.</p>
+    <!-- Updated Header matching the provided image -->
+    <div class="header-section">
+        <div class="header-titles">
+            <h1 class="page-title">Manage Vehicle Listings</h1>
+            <div class="page-subtitle">Review, search, and sort all gathered and user-submitted data.</div>
         </div>
-        
-        <!-- SEARCH BAR -->
-        <form method="GET" action="manage_listings.php" class="search-form">
-            <!-- Preserve current sorting when searching -->
-            <input type="hidden" name="sort" value="<?php echo htmlspecialchars($sort); ?>">
-            <input type="hidden" name="dir" value="<?php echo htmlspecialchars($dir); ?>">
-            
+        <form class="search-form" method="GET" action="">
             <input type="text" name="search" class="search-input" placeholder="Search brand, model, status..." value="<?php echo htmlspecialchars($search); ?>">
-            <button type="submit" class="btn-search">Search</button>
-            <?php if ($search !== ''): ?>
-                <!-- Clear button removes search but keeps sorting intact -->
-                <a href="?sort=<?php echo $sort; ?>&dir=<?php echo $dir; ?>" class="btn-clear">Clear</a>
-            <?php endif; ?>
+            <button type="submit" class="search-btn">Search</button>
         </form>
     </div>
     
+    <?php if (isset($msg)): ?>
+        <div style="padding: 16px; background: #eff6ff; color: #1e3a8a; border-radius: 8px; margin-bottom: 24px; font-weight: 600;">
+            <?php echo $msg; ?>
+        </div>
+    <?php endif; ?>
+
     <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th><?php echo sortLink('id', 'ID', $sort, $dir, $next_dir, $search); ?></th>
-            <th><?php echo sortLink('brand', 'Vehicle', $sort, $dir, $next_dir, $search); ?></th>
-            <th><?php echo sortLink('asking_price', 'Asking Price', $sort, $dir, $next_dir, $search); ?></th>
-            <th><?php echo sortLink('listing_type', 'Source', $sort, $dir, $next_dir, $search); ?></th>
-            <th><?php echo sortLink('status', 'Status', $sort, $dir, $next_dir, $search); ?></th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php foreach ($listings as $car): ?>
-          <tr>
-            <td>#<?php echo $car['id']; ?></td>
-            <td>
-                <b><?php echo htmlspecialchars($car['year_manufactured'] . ' ' . $car['brand'] . ' ' . $car['model']); ?></b><br>
-                <span style="font-size:12px; color:#6b7280;"><?php echo number_format($car['mileage']); ?> km • <?php echo htmlspecialchars($car['transmission']); ?></span>
-            </td>
-            <td>
-                <b>₱<?php echo number_format($car['asking_price']); ?></b>
-                <?php if($car['predicted_value'] > 0): ?>
-                    <br><span style="font-size:12px; color:#3b82f6;">Est: ₱<?php echo number_format($car['predicted_value']); ?></span>
-                <?php endif; ?>
-            </td>
-            <td><span class="badge <?php echo $car['listing_type']; ?>"><?php echo htmlspecialchars($car['listing_type']); ?></span></td>
-            <td><span class="badge <?php echo $car['status']; ?>"><?php echo htmlspecialchars($car['status']); ?></span></td>
-            <td>
-              <div class="action-btns">
-                <!-- VIEW BUTTON -->
-                <button class="btn-icon btn-view" title="View Details" onclick='openModal(<?php echo json_encode($car, JSON_HEX_APOS | JSON_HEX_QUOT); ?>)'>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                </button>
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Vehicle</th>
+                    <th>Price</th>
+                    <th>Mileage</th>
+                    <th>Seller</th>
+                    <th>Status</th>
+                    <th style="text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (count($listings) > 0): ?>
+                    <?php foreach ($listings as $car): ?>
+                        <tr>
+                            <td>#<?php echo htmlspecialchars($car['id']); ?></td>
+                            <td>
+                                <strong><?php echo htmlspecialchars($car['year_manufactured'] . ' ' . $car['brand'] . ' ' . $car['model']); ?></strong><br>
+                                <span style="font-size: 12px; color: #6b7280;"><?php echo htmlspecialchars($car['color'] . ' • ' . $car['transmission']); ?></span>
+                            </td>
+                            <td style="font-weight: 700; color: #10b981;">₱ <?php echo number_format((float)$car['asking_price']); ?></td>
+                            <td><?php echo number_format((float)$car['mileage']); ?> km</td>
+                            <td><?php echo htmlspecialchars($car['seller_name'] ?? 'N/A'); ?></td>
+                            <td>
+                                <span class="status-badge status-<?php echo strtolower($car['status']); ?>">
+                                    <?php echo ucfirst($car['status']); ?>
+                                </span>
+                            </td>
+                            <td>
+                                <div class="action-group">
+                                    <!-- View (Eye) Button -->
+                                    <button class="action-btn" onclick="openDetailsModal(this)" data-car="<?php echo htmlspecialchars(json_encode($car), ENT_QUOTES, 'UTF-8'); ?>" title="View Details">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                            <circle cx="12" cy="12" r="3"/>
+                                        </svg>
+                                    </button>
+                                    
+                                    <!-- Edit (Pencil) Button -->
+                                    <a href="edit_listing.php?id=<?php echo $car['id']; ?>" class="action-btn" title="Edit Listing">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                        </svg>
+                                    </a>
 
-                <!-- EDIT BUTTON -->
-                <a href="edit_listing.php?id=<?php echo $car['id']; ?>" class="btn-icon btn-edit" title="Edit Listing">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                </a>
-                
-                <!-- APPROVE BUTTON -->
-                <?php if($car['status'] !== 'approved'): ?>
-                <form method="POST" style="display:inline;">
-                    <input type="hidden" name="action" value="approve">
-                    <input type="hidden" name="listing_id" value="<?php echo $car['id']; ?>">
-                    <button type="submit" class="btn-icon btn-approve" title="Approve"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg></button>
-                </form>
+                                    <!-- Delete (Trash) Button -->
+                                    <form method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete listing #<?php echo $car['id']; ?>? This action cannot be undone.');">
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="listing_id" value="<?php echo $car['id']; ?>">
+                                        <button type="submit" class="action-btn delete-btn" style="color: #dc2626;" title="Delete Listing">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <polyline points="3 6 5 6 21 6"></polyline>
+                                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                                <line x1="10" y1="11" x2="10" y2="17"></line>
+                                                <line x1="14" y1="11" x2="14" y2="17"></line>
+                                            </svg>
+                                        </button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="7" style="text-align: center; padding: 32px; color: #6b7280;">No listings found matching your search.</td>
+                    </tr>
                 <?php endif; ?>
-
-                <!-- REJECT BUTTON -->
-                <?php if($car['status'] === 'pending'): ?>
-                <form method="POST" style="display:inline;">
-                    <input type="hidden" name="action" value="reject">
-                    <input type="hidden" name="listing_id" value="<?php echo $car['id']; ?>">
-                    <button type="submit" class="btn-icon btn-reject" title="Reject"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg></button>
-                </form>
-                <?php endif; ?>
-
-                <!-- DELETE BUTTON -->
-                <form method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this listing?');">
-                    <input type="hidden" name="action" value="delete">
-                    <input type="hidden" name="listing_id" value="<?php echo $car['id']; ?>">
-                    <button type="submit" class="btn-icon btn-delete" title="Delete"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
-                </form>
-              </div>
-            </td>
-          </tr>
-          <?php endforeach; ?>
-          <?php if(empty($listings)): ?>
-          <tr><td colspan="6" style="text-align:center; padding: 40px; color: #6b7280;">No listings match your search.</td></tr>
-          <?php endif; ?>
-        </tbody>
-      </table>
+            </tbody>
+        </table>
     </div>
-  </div>
 </div>
 
-<!-- FULL DATA MODAL -->
-<div class="modal-overlay" id="dataModal">
-    <div class="modal-content">
-        <button class="modal-close" onclick="closeModal()">×</button>
-        <div class="modal-title" id="m_title">Vehicle Details</div>
-        <div class="data-grid">
-            <div class="data-group price-highlight"><div class="data-lbl">Asking Price</div><div class="data-val" id="m_asking"></div></div>
-            <div class="data-group price-highlight"><div class="data-lbl">System Prediction</div><div class="data-val" id="m_predicted"></div></div>
-            <div class="data-group"><div class="data-lbl">Brand</div><div class="data-val" id="m_brand"></div></div>
-            <div class="data-group"><div class="data-lbl">Model</div><div class="data-val" id="m_model"></div></div>
-            <div class="data-group"><div class="data-lbl">Year</div><div class="data-val" id="m_year"></div></div>
-            <div class="data-group"><div class="data-lbl">Mileage</div><div class="data-val" id="m_mileage"></div></div>
-            <div class="data-group"><div class="data-lbl">Transmission</div><div class="data-val" id="m_trans"></div></div>
-            <div class="data-group"><div class="data-lbl">Fuel Type</div><div class="data-val" id="m_fuel"></div></div>
-            <div class="data-group"><div class="data-lbl">Color</div><div class="data-val" id="m_color"></div></div>
-            <div class="data-group"><div class="data-lbl">Location</div><div class="data-val" id="m_location"></div></div>
+<!-- ========================= -->
+<!-- DETAILED VIEW MODAL       -->
+<!-- ========================= -->
+<div id="detailsModal" class="modal-overlay" onclick="closeModal(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        
+        <div class="modal-header">
+            <div class="modal-title" id="m_title">Vehicle Details</div>
+            <button class="btn-close" onclick="document.getElementById('detailsModal').classList.remove('active')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
         </div>
-        <h4 style="margin: 0 0 12px 0; color: #374151;">Condition & History</h4>
-        <div class="data-grid">
-            <div class="data-group"><div class="data-lbl">Maintenance</div><div class="data-val" id="m_maint"></div></div>
-            <div class="data-group"><div class="data-lbl">Accidents</div><div class="data-val" id="m_acc"></div></div>
-            <div class="data-group"><div class="data-lbl">Registration</div><div class="data-val" id="m_reg"></div></div>
-            <div class="data-group"><div class="data-lbl">Modifications</div><div class="data-val" id="m_mods"></div></div>
-        </div>
-        <h4 style="margin: 0 0 12px 0; color: #374151;">Listing Info</h4>
-        <div class="data-grid">
-            <div class="data-group"><div class="data-lbl">Source</div><div class="data-val" id="m_type"></div></div>
-            <div class="data-group"><div class="data-lbl">Seller Name</div><div class="data-val" id="m_seller"></div></div>
-            <div class="data-group" style="grid-column: span 2;"><div class="data-lbl">Contact / URL</div><div class="data-val" id="m_contact" style="word-wrap: break-word;"></div></div>
+        
+        <div class="modal-body">
+            
+            <!-- Section 1: Specs -->
+            <div class="detail-section">
+                <h4>Vehicle Specifications</h4>
+                <div class="detail-grid">
+                    <div class="data-group"><span class="data-lbl">Brand / Model</span><span class="data-val" id="m_vehicle"></span></div>
+                    <div class="data-group"><span class="data-lbl">Mileage</span><span class="data-val" id="m_mileage"></span></div>
+                    <div class="data-group"><span class="data-lbl">Transmission</span><span class="data-val" id="m_trans"></span></div>
+                    <div class="data-group"><span class="data-lbl">Fuel Type</span><span class="data-val" id="m_fuel"></span></div>
+                    <div class="data-group"><span class="data-lbl">Color</span><span class="data-val" id="m_color"></span></div>
+                    <div class="data-group"><span class="data-lbl">Modifications</span><span class="data-val" id="m_mods"></span></div>
+                </div>
+            </div>
+
+            <!-- Section 2: Condition & Legal -->
+            <div class="detail-section">
+                <h4>Condition & Documentation</h4>
+                <div class="detail-grid">
+                    <div class="data-group"><span class="data-lbl">General Condition</span><span class="data-val" id="m_cond"></span></div>
+                    <div class="data-group"><span class="data-lbl">First Owner</span><span class="data-val" id="m_owner"></span></div>
+                    <div class="data-group"><span class="data-lbl">Flooded</span><span class="data-val" id="m_flood"></span></div>
+                    <div class="data-group"><span class="data-lbl">Accidents</span><span class="data-val" id="m_acc"></span></div>
+                    <div class="data-group"><span class="data-lbl">LTO Status</span><span class="data-val" id="m_lto"></span></div>
+                    <div class="data-group"><span class="data-lbl">OR/CR Ready</span><span class="data-val" id="m_orcr"></span></div>
+                    <div class="data-group"><span class="data-lbl">Fully Paid</span><span class="data-val" id="m_paid"></span></div>
+                    <div class="data-group"><span class="data-lbl">Deed of Sale</span><span class="data-val" id="m_deed"></span></div>
+                </div>
+            </div>
+
+            <!-- Section 3: Pricing & Seller -->
+            <div class="detail-section">
+                <h4>Pricing & Seller Info</h4>
+                <div class="detail-grid">
+                    <div class="data-group"><span class="data-lbl">Asking Price</span><span class="data-val" id="m_price" style="color:#10b981; font-weight:700;"></span></div>
+                    <div class="data-group"><span class="data-lbl">Negotiability</span><span class="data-val" id="m_nego"></span></div>
+                    <div class="data-group"><span class="data-lbl">Payment Methods</span><span class="data-val" id="m_pay"></span></div>
+                    <div class="data-group"><span class="data-lbl">Seller Name</span><span class="data-val" id="m_seller"></span></div>
+                    <div class="data-group"><span class="data-lbl">Contact Number</span><span class="data-val" id="m_contact"></span></div>
+                    <div class="data-group"><span class="data-lbl">Location</span><span class="data-val" id="m_loc"></span></div>
+                    <div class="data-group" style="grid-column: span 3;"><span class="data-lbl">Seller Notes</span><span class="data-val" id="m_notes" style="font-style: italic;"></span></div>
+                </div>
+            </div>
+
+            <!-- Section 4: Risk Assessment -->
+            <div class="detail-section" id="risk_section">
+                <h4>AI Risk Assessment</h4>
+                <div class="detail-grid">
+                    <div class="data-group"><span class="data-lbl">Risk Level</span><span class="data-val" id="m_risk_lvl"></span></div>
+                    <div class="data-group"><span class="data-lbl">Risk Score</span><span class="data-val" id="m_risk_score"></span></div>
+                    <div class="data-group"><span class="data-lbl">Recommendation</span><span class="data-val" id="m_risk_rec"></span></div>
+                    <div class="data-group" style="grid-column: span 3;"><span class="data-lbl">Identified Flags</span><span class="data-val" id="m_risk_flags"></span></div>
+                </div>
+            </div>
+
+            <!-- Section 5: Photos -->
+            <div class="detail-section" id="photo_section">
+                <h4>Vehicle Photos</h4>
+                <div class="photo-gallery" id="m_gallery">
+                    <!-- Images injected via JS -->
+                </div>
+            </div>
+
         </div>
     </div>
 </div>
 
 <script>
-function formatMoney(num) { if (!num || num == 0) return 'N/A'; return '₱' + Number(num).toLocaleString(); }
+const formatMoney = (num) => {
+    return "₱ " + parseFloat(num).toLocaleString('en-US', { minimumFractionDigits: 0 });
+};
 
-function openModal(car) {
-    document.getElementById('m_title').innerText = car.year_manufactured + ' ' + car.brand + ' ' + car.model;
-    document.getElementById('m_asking').innerText = formatMoney(car.asking_price);
-    document.getElementById('m_predicted').innerText = formatMoney(car.predicted_value);
-    document.getElementById('m_brand').innerText = car.brand;
-    document.getElementById('m_model').innerText = car.model;
-    document.getElementById('m_year').innerText = car.year_manufactured;
+function openDetailsModal(button) {
+    const carData = button.getAttribute('data-car');
+    if(!carData) return;
+    
+    const car = JSON.parse(carData);
+
+    // 1. Populate Headers & Specs
+    document.getElementById('m_title').innerText = "Listing #" + car.id + " Details";
+    document.getElementById('m_vehicle').innerText = car.year_manufactured + ' ' + car.brand + ' ' + car.model;
     document.getElementById('m_mileage').innerText = Number(car.mileage).toLocaleString() + ' km';
     document.getElementById('m_trans').innerText = car.transmission || 'N/A';
     document.getElementById('m_fuel').innerText = car.fuel_type || 'N/A';
     document.getElementById('m_color').innerText = car.color || 'N/A';
-    document.getElementById('m_location').innerText = car.location || 'N/A';
-    document.getElementById('m_maint').innerText = car.maintenance_history || 'N/A';
-    document.getElementById('m_acc').innerText = car.accident_history || 'N/A';
-    document.getElementById('m_reg').innerText = car.registration_status || 'N/A';
-    document.getElementById('m_mods').innerText = car.modifications || 'N/A';
-    document.getElementById('m_type').innerText = car.listing_type.toUpperCase();
+    document.getElementById('m_mods').innerText = car.modifications || 'Stock / None';
+
+    // 2. Populate Condition & Legal
+    document.getElementById('m_cond').innerText = car.maintenance_history || 'N/A';
+    document.getElementById('m_owner').innerText = car.first_owner || 'N/A';
+    document.getElementById('m_flood').innerText = car.flooded || 'No';
+    document.getElementById('m_acc').innerText = car.accident_history || 'None';
+    
+    document.getElementById('m_lto').innerText = car.registration_status || 'Unknown';
+    document.getElementById('m_orcr').innerText = car.or_cr_ready || 'N/A';
+    document.getElementById('m_paid').innerText = car.fully_paid || 'N/A';
+    document.getElementById('m_deed').innerText = car.deed_of_sale_ready || 'N/A';
+
+    // 3. Populate Pricing & Seller
+    document.getElementById('m_price').innerText = formatMoney(car.asking_price);
+    document.getElementById('m_nego').innerText = car.price_negotiability || 'N/A';
+    document.getElementById('m_pay').innerText = car.payment_methods || 'Cash';
+    
     document.getElementById('m_seller').innerText = car.seller_name || 'N/A';
     document.getElementById('m_contact').innerText = car.seller_contact || 'N/A';
-    document.getElementById('dataModal').classList.add('active');
+    
+    // Combine detailed location if available
+    let locArray = [];
+    if(car.location) locArray.push(car.location);
+    if(car.barangay) locArray.push(car.barangay);
+    if(car.city) locArray.push(car.city);
+    document.getElementById('m_loc').innerText = locArray.length > 0 ? locArray.join(', ') : 'N/A';
+    
+    document.getElementById('m_notes').innerText = car.seller_notes ? `"${car.seller_notes}"` : 'No additional notes provided.';
+
+    // 4. Populate Risk Assessment (Hide section if no risk data)
+    const riskSection = document.getElementById('risk_section');
+    if (car.risk_level) {
+        riskSection.style.display = 'block';
+        let riskColorClass = 'risk-low';
+        if(car.risk_level === 'High') riskColorClass = 'risk-high';
+        if(car.risk_level === 'Medium') riskColorClass = 'risk-med';
+        
+        document.getElementById('m_risk_lvl').innerHTML = `<span class="${riskColorClass}">${car.risk_level}</span>`;
+        document.getElementById('m_risk_score').innerText = car.risk_score + '/100';
+        document.getElementById('m_risk_rec').innerText = car.risk_recommendation || 'N/A';
+        document.getElementById('m_risk_flags').innerText = car.risk_flags || 'None detected.';
+    } else {
+        riskSection.style.display = 'none';
+    }
+
+    // 5. Populate Photo Gallery
+    const gallery = document.getElementById('m_gallery');
+    gallery.innerHTML = ''; 
+    
+    const photoFields = [
+        { key: 'photo_front', label: 'Front View' },
+        { key: 'photo_rear', label: 'Rear View' },
+        { key: 'photo_side', label: 'Side Profile' },
+        { key: 'photo_engine', label: 'Engine Bay' },
+        { key: 'photo_interior', label: 'Interior' },
+        { key: 'photo_dashboard', label: 'Dashboard' }
+    ];
+
+    let hasPhotos = false;
+    photoFields.forEach(p => {
+        if (car[p.key]) {
+            hasPhotos = true;
+            gallery.innerHTML += `
+                <div class="photo-item">
+                    <a href="../uploads/${car[p.key]}" target="_blank">
+                        <img src="../uploads/${car[p.key]}" alt="${p.label}" onerror="this.src='https://via.placeholder.com/150?text=Missing'">
+                    </a>
+                    <div class="photo-label">${p.label}</div>
+                </div>
+            `;
+        }
+    });
+
+    if (!hasPhotos) {
+        gallery.innerHTML = '<span style="color:#6b7280; font-size: 13px; padding: 12px 0;">No photos uploaded for this listing.</span>';
+    }
+
+    // Show Modal
+    document.getElementById('detailsModal').classList.add('active');
 }
 
-function closeModal() { document.getElementById('dataModal').classList.remove('active'); }
-window.onclick = function(event) { if (event.target == document.getElementById('dataModal')) closeModal(); }
+function closeModal(event) {
+    if (event.target === document.getElementById('detailsModal')) {
+        document.getElementById('detailsModal').classList.remove('active');
+    }
+}
 </script>
 
-<?php include '../footer.php'; ?>
+<?php include 'footer.php'; ?>
