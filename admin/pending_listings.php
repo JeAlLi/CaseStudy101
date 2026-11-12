@@ -7,14 +7,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && isset($_
     $listing_id = (int)$_POST['listing_id'];
     $action = $_POST['action'];
 
-    if ($action === 'approve') {
-        $pdo->prepare("UPDATE vehicle_listings SET status = 'approved' WHERE id = ?")->execute([$listing_id]);
-        $msg = "Listing #{$listing_id} has been approved and is now live.";
+if ($action === 'approve') {
+        // Updated query to set BOTH status and verification_status
+        $pdo->prepare("UPDATE vehicle_listings SET status = 'approved', verification_status = 'mechanic_verified' WHERE id = ?")->execute([$listing_id]);
+        $msg = "Listing #{$listing_id} has been approved and is now mechanic verified.";
     } elseif ($action === 'reject') {
         $pdo->prepare("UPDATE vehicle_listings SET status = 'rejected' WHERE id = ?")->execute([$listing_id]);
         $msg = "Listing #{$listing_id} has been rejected.";
     }
-}
 
 $stmt = $pdo->query("SELECT * FROM vehicle_listings WHERE status = 'pending' ORDER BY date_added ASC");
 $pending_listings = $stmt->fetchAll(PDO::FETCH_ASSOC);
