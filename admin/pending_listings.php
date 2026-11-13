@@ -15,8 +15,6 @@ if ($action === 'approve') {
         $pdo->prepare("UPDATE vehicle_listings SET status = 'rejected' WHERE id = ?")->execute([$listing_id]);
         $msg = "Listing #{$listing_id} has been rejected.";
     }
-}
-
 
 $stmt = $pdo->query("SELECT * FROM vehicle_listings WHERE status = 'pending' ORDER BY date_added ASC");
 $pending_listings = $stmt->fetchAll(PDO::FETCH_ASSOC);
