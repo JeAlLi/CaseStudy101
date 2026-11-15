@@ -17,12 +17,39 @@ try {
     $verified_count = (int)$pdo->query("SELECT COUNT(*) FROM vehicle_listings WHERE verification_status = 'mechanic_verified'")->fetchColumn();
     
     $recent_pending = $pdo->query("SELECT * FROM vehicle_listings WHERE status = 'pending' ORDER BY date_added DESC LIMIT 5")->fetchAll(PDO::FETCH_ASSOC);
+
+    // Fetch Chart 1 Data: Average Price by Year (Market Trend)
+    $trend_data = $pdo->query("
+        SELECT year_manufactured, AVG(asking_price) AS avg_p 
+        FROM vehicle_listings 
+        WHERE year_manufactured BETWEEN 2013 AND 2026 
+        GROUP BY year_manufactured 
+        ORDER BY year_manufactured ASC
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    $trend_labels = []; 
+    $trend_values = [];
+    foreach ($trend_data as $t) { 
+        $trend_labels[] = $t['year_manufactured']; 
+        $trend_values[] = round($t['avg_p'], 2); 
+    }
+
+    // Fetch Chart 2 Data: Listings by Model (Share Distribution)
+    $model_data = $pdo->query("
+        SELECT model, COUNT(*) AS cnt 
+        FROM vehicle_listings 
+        GROUP BY model 
+        ORDER BY cnt DESC
+    ")->fetchAll(PDO::FETCH_KEY_PAIR);
+
 } catch (Exception $e) {
     die("<h3>Database Error:</h3> <p>" . $e->getMessage() . "</p>");
 }
 
 include 'header.php';
 ?>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <style>
   .admin-dash { max-width: 1280px; margin: 0 auto; padding: 24px 20px; }
@@ -46,7 +73,7 @@ include 'header.php';
   .qa-title { font-family: var(--font-display); font-size: 16px; font-weight: 800; color: var(--text); margin-bottom: 4px; }
   .qa-sub { font-size: 13px; color: var(--text-muted); font-weight: 500; }
 
-  .dash-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; box-shadow: var(--shadow-sm); }
+  .dash-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; box-shadow: var(--shadow-sm); margin-bottom: 24px; }
   .dash-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--border); }
   .dash-panel-title { font-family: var(--font-display); font-size: 18px; font-weight: 800; color: var(--text); }
   
@@ -60,7 +87,19 @@ include 'header.php';
   .pending-info .meta { font-size: 12.5px; color: var(--text-muted); font-weight: 500; }
   .pending-price { font-family: var(--font-display); font-size: 16px; font-weight: 800; color: var(--teal); }
 
-  @media (max-width: 1024px) { .dash-stats { grid-template-columns: repeat(2, 1fr); } .quick-actions { grid-template-columns: 1fr; } }
+  /* Charts Styles */
+  .charts-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+  .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+  .chart-header h3 { font-size: 18px; font-family: var(--font-display); font-weight: 800; color: var(--text); }
+  .chart-tag { font-size: 10px; font-weight: 800; background: var(--paper); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+  .chart-container { position: relative; height: 320px; width: 100%; }
+
+  @media (max-width: 1024px) { 
+    .dash-stats { grid-template-columns: repeat(2, 1fr); } 
+    .quick-actions { grid-template-columns: 1fr; } 
+    .charts-grid { grid-template-columns: 1fr; }
+  }
   @media (max-width: 640px) { .dash-stats { grid-template-columns: 1fr; } }
 </style>
 
@@ -137,6 +176,104 @@ include 'header.php';
       </div>
     <?php endif; ?>
   </div>
+
+  <!-- Charts Row -->
+  <div class="charts-grid">
+      <div class="chart-card">
+          <div class="chart-header">
+              <h3>Average Price by Year</h3>
+              <span class="chart-tag">Market Trend</span>
+          </div>
+          <div class="chart-container">
+              <canvas id="priceTrendChart"></canvas>
+          </div>
+      </div>
+
+      <div class="chart-card">
+          <div class="chart-header">
+              <h3>Listings by Model</h3>
+              <span class="chart-tag">Share %</span>
+          </div>
+          <div class="chart-container">
+              <canvas id="modelDistChart"></canvas>
+          </div>
+      </div>
+  </div>
 </div>
+
+<script>
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark' || document.body.classList.contains('dark-theme') || true; // Force dark logic for admin if needed
+    const gridColor = isDark ? '#334155' : '#E2E8F0';
+    const textColor = isDark ? '#94A3B8' : '#64748B';
+    
+    // 1. Line Chart: Price Trends
+    new Chart(document.getElementById('priceTrendChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: <?php echo json_encode($trend_labels); ?>,
+            datasets: [{
+                label: 'Avg Price (PHP)',
+                data: <?php echo json_encode($trend_values); ?>,
+                borderColor: '#3B82F6', // Blue
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                borderWidth: 3, 
+                fill: true, 
+                tension: 0.4,
+                pointBackgroundColor: isDark ? '#1A1C16' : '#fff',
+                pointBorderColor: '#3B82F6',
+                pointBorderWidth: 2, 
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true, 
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { 
+                    beginAtZero: false, 
+                    grid: { color: gridColor }, 
+                    ticks: { color: textColor, callback: v => '₱' + (v / 1000).toFixed(0) + 'K' } 
+                },
+                x: { 
+                    grid: { display: false }, 
+                    ticks: { color: textColor } 
+                }
+            }
+        }
+    });
+
+    // 2. Doughnut Chart: Model Distribution
+    new Chart(document.getElementById('modelDistChart').getContext('2d'), {
+        type: 'doughnut',
+        data: {
+            labels: <?php echo json_encode(array_keys($model_data)); ?>,
+            datasets: [{
+                data: <?php echo json_encode(array_values($model_data)); ?>,
+                backgroundColor: [
+                    '#3B82F6', // Blue
+                    '#10B981', // Teal
+                    '#F59E0B', // Amber
+                    '#EF4444', // Coral
+                    '#8B5CF6', // Purple
+                    '#EC4899', // Pink
+                ],
+                borderWidth: 2,
+                borderColor: isDark ? '#2C3026' : '#ffffff' // Surface color for gaps
+            }]
+        },
+        options: {
+            responsive: true, 
+            maintainAspectRatio: false, 
+            cutout: '70%',
+            plugins: { 
+                legend: { 
+                    position: 'bottom', 
+                    labels: { color: textColor, boxWidth: 12, padding: 16 } 
+                } 
+            }
+        }
+    });
+</script>
 
 <?php include 'footer.php'; ?>

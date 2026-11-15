@@ -1,6 +1,51 @@
 <?php
-$theme = $_COOKIE['theme'] ?? 'light';
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+// Fetch the user's name from the session, default to 'Guest' if not logged in
+$display_name = $_SESSION['full_name'] ?? 'Guest';
+$is_logged_in = isset($_SESSION['user_id']);
+
 ?>
+
+<!-- HTML and CSS MUST go after the closing ?> tag -->
+<style>
+    /* Tactical Theme Header Additions */
+    .user-profile-section {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+    .user-greeting {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--khaki, #C3B091);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;  
+    }
+    .logout-btn {
+        background: transparent;
+        color: var(--text-main, #E8EBE4);
+        border: 1px solid var(--border, #414833);
+        padding: 6px 16px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        text-decoration: none;
+        transition: all 0.2s ease;
+    }
+    .logout-btn:hover {
+        background: rgba(220, 53, 69, 0.1);
+        border-color: #dc3545;
+        color: #ff8793;
+    }
+</style>
+
+</div>
+</div>
 <!DOCTYPE html>
 <html lang="en" data-theme="<?php echo $theme; ?>">
 <head>
@@ -71,10 +116,7 @@ $theme = $_COOKIE['theme'] ?? 'light';
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
         Price Predictor
       </a>
-      <a href="dataset.php" class="nav-item <?php echo ($current_page == 'dataset') ? 'active' : ''; ?>">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
-        Market Data
-      </a>
+      
       <a href="about.php" class="nav-item <?php echo ($current_page == 'about') ? 'active' : ''; ?>">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><circle cx="12" cy="8.2" r="0.6" fill="currentColor"/></svg>
         About Us
@@ -102,8 +144,30 @@ $theme = $_COOKIE['theme'] ?? 'light';
           <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
         </button>
         <div class="user-profile">
-          <div class="user-avatar">U</div>
-          <div class="user-name">Guest User</div>
+
+          <div style="display: flex; align-items: center; gap: 12px;">
+
+    <!-- Dynamic User Profile Pill -->
+    <div style="display: flex; align-items: center; gap: 8px; background: var(--surface, #fff); border: 1px solid var(--border, #e2e8f0); padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; color: var(--text, #1e293b); box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+        </svg>
+        <?php echo htmlspecialchars($display_name); ?>
+    </div>
+
+    <!-- Conditional Logout Button -->
+    <?php if ($is_logged_in): ?>
+        <a href="logout.php" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #ef4444; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; text-decoration: none; text-transform: uppercase; letter-spacing: 0.5px; transition: 0.2s;">
+            Logout
+        </a>
+    <?php else: ?>
+        <!-- Optional: Show a login button if they are actually a guest -->
+        <a href="login.php" style="background: var(--blue, #2563eb); border: 1px solid var(--blue, #2563eb); color: #fff; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; text-decoration: none; text-transform: uppercase; letter-spacing: 0.5px; transition: 0.2s;">
+            Login
+        </a>
+    <?php endif; ?>
+</div>
         </div>
       </div>
     </div>
