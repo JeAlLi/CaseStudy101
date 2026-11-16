@@ -82,7 +82,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $primary_contact = trim($_POST['seller_contact'] ?? '');
         $other_contact = trim($_POST['other_contact'] ?? '');
         
-        // Admin overrides contact validation just in case, but format is still checked on frontend
         $seller_contact = $primary_contact;
         if (!empty($other_contact)) {
             $seller_contact .= ' (' . $other_contact . ')';
@@ -178,16 +177,111 @@ include 'header.php';
     .form-control:disabled { background: var(--border); cursor: not-allowed; opacity: 0.7; }
     .radio-group, .checkbox-group { display: flex; gap: 16px; flex-wrap: wrap; }
     .radio-label, .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text); cursor: pointer; }
+    
+    /* Photo Upload & Live Preview Styles */
+    .photo-upload-card {
+        background: var(--paper);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        transition: var(--transition);
+    }
+    .photo-upload-card:hover {
+        border-color: var(--blue);
+    }
+    .photo-upload-card.has-file {
+        border-color: var(--teal);
+        background: rgba(16, 185, 129, 0.04);
+    }
+    .photo-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .photo-preview-box {
+        position: relative;
+        width: 100%;
+        height: 140px;
+        border-radius: 8px;
+        border: 1px dashed var(--border);
+        background: var(--bg-color, #121410);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        cursor: pointer;
+    }
+    .photo-preview-box img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: none;
+    }
+    .photo-placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        color: var(--text-muted);
+        font-size: 11px;
+        font-weight: 600;
+        text-align: center;
+        padding: 10px;
+        pointer-events: none;
+    }
+    .photo-placeholder svg {
+        width: 28px;
+        height: 28px;
+        opacity: 0.6;
+        color: var(--blue);
+    }
+    .remove-photo-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: rgba(18, 20, 16, 0.85);
+        color: var(--coral);
+        border: 1px solid var(--coral);
+        font-size: 16px;
+        font-weight: 800;
+        line-height: 1;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 5;
+        transition: 0.2s;
+    }
+    .remove-photo-btn:hover {
+        background: var(--coral);
+        color: #fff;
+    }
+
     .btn-submit { background: var(--teal); color: white; padding: 16px 24px; border: none; border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer; width: 100%; transition: 0.2s; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2); text-transform: uppercase; letter-spacing: 1px;}
     .btn-submit:hover { background: #0D9488; transform: translateY(-2px); }
     .alert { padding: 16px; border-radius: 8px; margin-bottom: 24px; font-weight: 500; }
     .alert-success { background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; color: #34d399; }
     .alert-danger { background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; color: #ff8793; }
+
+    @media (max-width: 768px) {
+        .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    }
 </style>
 
 <div class="view" style="padding: 32px 24px;">
     <div class="form-container">
-        <h2 style="font-family: var(--font-display); font-size: 28px; font-weight: 800; color: var(--text); margin-bottom: 8px;">Mechanic Listing</h2>
+        <h2 style="font-family: var(--font-display); font-size: 28px; font-weight: 800; color: var(--text); margin-bottom: 8px;">Direct Database Injection</h2>
         <p style="color: var(--text-muted); margin-bottom: 32px;">Listings added here bypass the pending queue and are instantly marked as Mechanic Verified.</p>
 
         <?php if ($success_message): ?><div class="alert alert-success"><?php echo $success_message; ?></div><?php endif; ?>
@@ -408,35 +502,49 @@ include 'header.php';
                 </div>
             </div>
 
-            <!-- 6. Photo Gallery -->
+            <!-- 6. Photo Gallery with Live Previews -->
             <div class="form-section">
                 <div class="section-title"><span>6</span> Vehicle Photos</div>
-                <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">Max size 5MB per photo. Admin uploads are saved directly to the public directory.</p>
+                <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">Click a box or choose a file to preview photos before injection. Max size 5MB per photo.</p>
                 <div class="grid-3">
-                    <div class="form-group">
-                        <label>Front Angle <span style="color:var(--coral);">*</span></label>
-                        <input type="file" name="photo_front" class="form-control" accept="image/jpeg, image/png, image/webp" required>
+                    <?php
+                    $photo_slots = [
+                        'photo_front'     => ['label' => 'Front Angle',          'req' => true],
+                        'photo_rear'      => ['label' => 'Rear Angle',           'req' => true],
+                        'photo_side'      => ['label' => 'Side Angle',           'req' => false],
+                        'photo_engine'    => ['label' => 'Engine Bay',           'req' => false],
+                        'photo_interior'  => ['label' => 'Interior (Seats)',     'req' => false],
+                        'photo_dashboard' => ['label' => 'Dashboard & Odometer', 'req' => false],
+                    ];
+                    foreach ($photo_slots as $field => $meta):
+                    ?>
+                    <div class="photo-upload-card" id="card_<?php echo $field; ?>">
+                        <div class="photo-card-header">
+                            <span><?php echo $meta['label']; ?> <?php if ($meta['req']): ?><span style="color:var(--coral);">*</span><?php endif; ?></span>
+                        </div>
+                        <div class="photo-preview-box" onclick="document.getElementById('input_<?php echo $field; ?>').click();">
+                            <img id="preview_<?php echo $field; ?>" alt="<?php echo htmlspecialchars($meta['label']); ?> Preview">
+                            <div class="photo-placeholder" id="placeholder_<?php echo $field; ?>">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+                                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                                    <circle cx="12" cy="13" r="4"></circle>
+                                </svg>
+                                <span>Click to Select Photo</span>
+                            </div>
+                            <button type="button" class="remove-photo-btn" id="remove_<?php echo $field; ?>" onclick="event.stopPropagation(); clearPhotoPreview('<?php echo $field; ?>');" title="Remove photo">&times;</button>
+                        </div>
+                        <input 
+                            type="file" 
+                            name="<?php echo $field; ?>" 
+                            id="input_<?php echo $field; ?>" 
+                            class="form-control" 
+                            style="font-size: 12px; padding: 8px;" 
+                            accept="image/jpeg, image/png, image/webp" 
+                            onchange="handlePhotoPreview(this, '<?php echo $field; ?>')"
+                            <?php echo $meta['req'] ? 'required' : ''; ?>
+                        >
                     </div>
-                    <div class="form-group">
-                        <label>Rear Angle <span style="color:var(--coral);">*</span></label>
-                        <input type="file" name="photo_rear" class="form-control" accept="image/jpeg, image/png, image/webp" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Side Angle</label>
-                        <input type="file" name="photo_side" class="form-control" accept="image/jpeg, image/png, image/webp">
-                    </div>
-                    <div class="form-group">
-                        <label>Engine Bay</label>
-                        <input type="file" name="photo_engine" class="form-control" accept="image/jpeg, image/png, image/webp">
-                    </div>
-                    <div class="form-group">
-                        <label>Interior (Seats)</label>
-                        <input type="file" name="photo_interior" class="form-control" accept="image/jpeg, image/png, image/webp">
-                    </div>
-                    <div class="form-group">
-                        <label>Dashboard & Odometer</label>
-                        <input type="file" name="photo_dashboard" class="form-control" accept="image/jpeg, image/png, image/webp">
-                    </div>
+                    <?php endforeach; ?>
                 </div>
             </div>
 
@@ -459,7 +567,7 @@ include 'header.php';
                 </div>
             </div>
             
-            <button type="submit" class="btn-submit">Publish & Auto-Approve Listing</button>
+            <button type="submit" class="btn-submit">Publish &amp; Auto-Approve Listing</button>
         </form>
     </div>
 </div>
@@ -467,6 +575,54 @@ include 'header.php';
 <script src="../car_colors.php"></script>
 <script src="../ph_locations.php"></script>
 <script>
+    // ==========================================
+    // 0. PHOTO PREVIEW & VALIDATION LOGIC
+    // ==========================================
+    function handlePhotoPreview(input, field) {
+        const previewImg = document.getElementById('preview_' + field);
+        const placeholder = document.getElementById('placeholder_' + field);
+        const removeBtn = document.getElementById('remove_' + field);
+        const card = document.getElementById('card_' + field);
+
+        if (input.files && input.files[0]) {
+            const file = input.files[0];
+
+            // Enforce 5MB max file size on the client side
+            if (file.size > 5 * 1024 * 1024) {
+                alert('File "' + file.name + '" exceeds the 5MB limit. Please choose a smaller image.');
+                clearPhotoPreview(field);
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                previewImg.src = e.target.result;
+                previewImg.style.display = 'block';
+                placeholder.style.display = 'none';
+                removeBtn.style.display = 'flex';
+                card.classList.add('has-file');
+            };
+            reader.readAsDataURL(file);
+        } else {
+            clearPhotoPreview(field);
+        }
+    }
+
+    function clearPhotoPreview(field) {
+        const input = document.getElementById('input_' + field);
+        const previewImg = document.getElementById('preview_' + field);
+        const placeholder = document.getElementById('placeholder_' + field);
+        const removeBtn = document.getElementById('remove_' + field);
+        const card = document.getElementById('card_' + field);
+
+        input.value = '';
+        previewImg.src = '';
+        previewImg.style.display = 'none';
+        placeholder.style.display = 'flex';
+        removeBtn.style.display = 'none';
+        card.classList.remove('has-file');
+    }
+
     // ==========================================
     // 1. VEHICLE MODEL, YEAR & COLOR LOGIC
     // ==========================================
