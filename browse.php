@@ -15,14 +15,18 @@ if ($f_model !== '') { $where[] = "model = ?";           $params[] = $f_model; }
 if ($f_min !== '' && is_numeric($f_min)) { $where[] = "asking_price >= ?"; $params[] = (float)$f_min; }
 if ($f_max !== '' && is_numeric($f_max)) { $where[] = "asking_price <= ?"; $params[] = (float)$f_max; }
 
-// NEW: Verification Filter
+// Verification Filter
 if ($f_verified === 'verified') { $where[] = "verification_status = 'mechanic_verified'"; }
 if ($f_verified === 'unverified') { $where[] = "verification_status = 'unverified'"; }
 
-$orderBy = "date_added DESC";
-if ($f_sort === 'price_asc')  $orderBy = "asking_price ASC";
-if ($f_sort === 'price_desc') $orderBy = "asking_price DESC";
-if ($f_sort === 'mileage')    $orderBy = "mileage ASC";
+// Determine the user's secondary sort preference
+$userSort = "date_added DESC";
+if ($f_sort === 'price_asc')  $userSort = "asking_price ASC";
+if ($f_sort === 'price_desc') $userSort = "asking_price DESC";
+if ($f_sort === 'mileage')    $userSort = "mileage ASC";
+
+// ALWAYS sort verified listings first (0), then unverified (1), then apply the user's sort preference
+$orderBy = "CASE WHEN verification_status = 'mechanic_verified' THEN 0 ELSE 1 END ASC, " . $userSort;
 
 $sql = "SELECT * FROM vehicle_listings WHERE " . implode(' AND ', $where) . " ORDER BY $orderBy";
 $stmt = $pdo->prepare($sql);
@@ -197,7 +201,6 @@ include 'header.php';
       <option value="Avanza" <?php echo $f_model === 'Avanza' ? 'selected' : ''; ?>>Avanza</option>
     </select>
     
-    <!-- NEW VERIFICATION FILTER -->
     <select name="verified" class="search-select" style="width: 160px;">
       <option value="all" <?php echo $f_verified === 'all' ? 'selected' : ''; ?>>All Status</option>
       <option value="verified" <?php echo $f_verified === 'verified' ? 'selected' : ''; ?>>Verified Only</option>
@@ -252,7 +255,8 @@ include 'header.php';
 
         <div class="car-content">
           <h3 class="car-title"><?php echo htmlspecialchars($row['brand'] . ' ' . $row['model']); ?></h3>
-          <div class="car-subtitle"><?php echo htmlspecialchars($row['color']); ?> • <?php echo htmlspecialchars($row['fuel_type']); ?></div>
+            <div class="car-subtitle"><?php echo htmlspecialchars($row['color']); ?>
+<?php echo htmlspecialchars($row['fuel_type']); ?></div>
 
           <div class="spec-pills">
             <span class="spec-pill">
